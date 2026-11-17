@@ -1,16 +1,12 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import express from 'express';
 import type { NextFunction, Request, Response } from 'express';
 
-const requireJson = createRequire(import.meta.url);
-
-const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = process.cwd();
+const MODULE_DIR = typeof __dirname !== 'undefined' ? __dirname : ROOT_DIR;
 const IS_VERCEL = Boolean(process.env.VERCEL || process.env.VERCEL_ENV);
 
 const BUNDLED_DATA_DIR = path.resolve(ROOT_DIR, '.data');
@@ -482,18 +478,16 @@ function requireOwnerOnly(req: AuthedRequest, res: Response, next: NextFunction)
 
 function getFirebaseApiKey(): string | null {
   if (process.env.FIREBASE_API_KEY) return process.env.FIREBASE_API_KEY;
-  try {
-    const bundledCfg = requireJson('../firebase-applet-config.json') as {
-      apiKey?: string;
-    };
-    if (bundledCfg?.apiKey) return bundledCfg.apiKey;
-  } catch {
-    // Fallback to runtime filesystem lookup
-  }
-  const candidatePaths = [
-    path.resolve(ROOT_DIR, 'firebase-applet-config.json'),
-    path.resolve(MODULE_DIR, '../firebase-applet-config.json'),
-  ];
+  if (process.env.VITE_FIREBASE_API_KEY) return process.env.VITE_FIREBASE_API_KEY;
+
+  const candidatePaths = Array.from(
+    new Set([
+      path.resolve(ROOT_DIR, 'firebase-applet-config.json'),
+      path.resolve(MODULE_DIR, 'firebase-applet-config.json'),
+      path.resolve(MODULE_DIR, '../firebase-applet-config.json'),
+      '/var/task/firebase-applet-config.json',
+    ])
+  );
   for (const cfgPath of candidatePaths) {
     try {
       if (fs.existsSync(cfgPath)) {
@@ -502,7 +496,7 @@ function getFirebaseApiKey(): string | null {
         if (parsed.apiKey) return parsed.apiKey;
       }
     } catch {
-      // Try next path
+      // Try next candidate path
     }
   }
   return null;

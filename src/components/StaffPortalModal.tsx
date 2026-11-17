@@ -78,6 +78,21 @@ const EMPTY_FORM: Omit<MenuItem, 'id'> = {
   sortOrder: 15,
 };
 
+async function safeParseJson<T extends Record<string, unknown>>(
+  resp: Response
+): Promise<T & { error?: string }> {
+  const text = await resp.text();
+  try {
+    return JSON.parse(text) as T & { error?: string };
+  } catch {
+    return {
+      error: resp.ok
+        ? 'Respon server tidak valid.'
+        : `Server sedang bermasalah (HTTP ${resp.status}). Silakan coba lagi atau periksa log Vercel.`,
+    } as T & { error?: string };
+  }
+}
+
 export function StaffPortalModal({
   open,
   onClose,
@@ -157,8 +172,10 @@ export function StaffPortalModal({
         headers: { Authorization: `Bearer ${token}` },
       });
       if (resp.ok) {
-        const json = (await resp.json()) as { accounts: StaffAccount[] };
-        setStaffAccounts(json.accounts);
+        const json = await safeParseJson<{ accounts?: StaffAccount[] }>(resp);
+        if (Array.isArray(json.accounts)) {
+          setStaffAccounts(json.accounts);
+        }
       }
     } catch {
       // Ignore transient network errors
@@ -206,11 +223,10 @@ export function StaffPortalModal({
           password: loginPassword,
         }),
       });
-      const json = (await resp.json()) as {
+      const json = await safeParseJson<{
         token?: string;
         session?: StaffSession;
-        error?: string;
-      };
+      }>(resp);
       if (!resp.ok || !json.token || !json.session) {
         notify('error', json.error || 'Username atau password salah.');
         return;
@@ -244,11 +260,10 @@ export function StaffPortalModal({
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ idToken }),
     });
-    const json = (await resp.json()) as {
+    const json = await safeParseJson<{
       token?: string;
       session?: StaffSession;
-      error?: string;
-    };
+    }>(resp);
     if (!resp.ok || !json.token || !json.session) {
       await signOut(auth);
       notify('error', json.error || 'Verifikasi Owner gagal.');
@@ -352,11 +367,10 @@ export function StaffPortalModal({
           password: ownerPassword,
         }),
       });
-      const json = (await resp.json()) as {
+      const json = await safeParseJson<{
         token?: string;
         session?: StaffSession;
-        error?: string;
-      };
+      }>(resp);
       if (!resp.ok || !json.token || !json.session) {
         notify('error', json.error || 'Gagal login Owner.');
         return;
@@ -434,7 +448,7 @@ export function StaffPortalModal({
           dataUrl,
         }),
       });
-      const json = (await resp.json()) as { url?: string; error?: string };
+      const json = await safeParseJson<{ url?: string }>(resp);
       if (!resp.ok || !json.url) {
         notify('error', json.error || 'Gagal mengunggah gambar.');
         return;
@@ -553,10 +567,7 @@ export function StaffPortalModal({
         },
         body: JSON.stringify(payload),
       });
-      const json = (await resp.json()) as {
-        menuItems?: MenuItem[];
-        error?: string;
-      };
+      const json = await safeParseJson<{ menuItems?: MenuItem[] }>(resp);
       if (!resp.ok || !json.menuItems) {
         notify('error', json.error || 'Gagal menyimpan menu.');
         return;
@@ -592,10 +603,7 @@ export function StaffPortalModal({
         method: 'DELETE',
         headers: { Authorization: `Bearer ${authToken}` },
       });
-      const json = (await resp.json()) as {
-        menuItems?: MenuItem[];
-        error?: string;
-      };
+      const json = await safeParseJson<{ menuItems?: MenuItem[] }>(resp);
       if (!resp.ok || !json.menuItems) {
         notify('error', json.error || 'Gagal menghapus menu.');
         return;
@@ -625,10 +633,7 @@ export function StaffPortalModal({
         method: 'POST',
         headers: { Authorization: `Bearer ${authToken}` },
       });
-      const json = (await resp.json()) as {
-        menuItems?: MenuItem[];
-        error?: string;
-      };
+      const json = await safeParseJson<{ menuItems?: MenuItem[] }>(resp);
       if (!resp.ok || !json.menuItems) {
         notify('error', json.error || 'Gagal mereset menu.');
         return;
@@ -656,10 +661,7 @@ export function StaffPortalModal({
         },
         body: JSON.stringify(contactForm),
       });
-      const json = (await resp.json()) as {
-        settings?: StoreSettings;
-        error?: string;
-      };
+      const json = await safeParseJson<{ settings?: StoreSettings }>(resp);
       if (!resp.ok || !json.settings) {
         notify('error', json.error || 'Gagal menyimpan kontak.');
         return;
@@ -732,10 +734,7 @@ export function StaffPortalModal({
           active: accActive,
         }),
       });
-      const json = (await resp.json()) as {
-        account?: StaffAccount;
-        error?: string;
-      };
+      const json = await safeParseJson<{ account?: StaffAccount }>(resp);
       if (!resp.ok || !json.account) {
         notify('error', json.error || 'Gagal menyimpan akun staff.');
         return;
