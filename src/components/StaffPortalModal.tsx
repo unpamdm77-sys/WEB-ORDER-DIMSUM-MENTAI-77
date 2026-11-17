@@ -98,6 +98,12 @@ export function StaffPortalModal({
   const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
 
+  // Owner Email + Password Fallback State (Vercel bypass for Firebase unauthorized-domain)
+  const [showOwnerFallback, setShowOwnerFallback] = useState(false);
+  const [ownerPassword, setOwnerPassword] = useState('');
+  const [showOwnerPassword, setShowOwnerPassword] = useState(false);
+  const [hasOwnerPassword, setHasOwnerPassword] = useState<boolean | null>(null);
+
   const [statusMessage, setStatusMessage] = useState<{
     type: 'success' | 'error';
     text: string;
@@ -166,6 +172,26 @@ export function StaffPortalModal({
       void fetchStaffAccounts(authToken);
     }
   }, [open, isOwner, authToken, activeTab]);
+
+  useEffect(() => {
+    if (!open || session || loginMode !== 'owner') return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch('/api/auth/owner-config');
+        if (!resp.ok || cancelled) return;
+        const json = (await resp.json()) as { hasOwnerPassword?: boolean };
+        if (!cancelled) {
+          setHasOwnerPassword(Boolean(json.hasOwnerPassword));
+        }
+      } catch {
+        // Ignore non-critical check
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, session, loginMode]);
 
   // --- AUTHENTICATION HANDLERS ---
   const handleStaffLoginSubmit = async (e: React.FormEvent) => {
@@ -280,9 +306,12 @@ export function StaffPortalModal({
         const host = window.location.hostname || 'domain-anda';
         setUnauthorizedDomain(host);
         setLoginMode('owner');
+        if (hasOwnerPassword) {
+          setShowOwnerFallback(true);
+        }
         setStatusMessage({
           type: 'error',
-          text: `Domain "${host}" belum didaftarkan di Firebase Authorized Domains. Ikuti panduan di bawah untuk mengaktifkannya.`,
+          text: `Domain "${host}" belum didaftarkan di Firebase Authorized Domains. Ikuti panduan di bawah atau login pakai Password Owner.`,
         });
       } else if (code === 'auth/popup-blocked' || msg.includes('popup-blocked')) {
         const isStandalone = typeof window !== 'undefined' && window.self === window.top;
@@ -302,6 +331,43 @@ export function StaffPortalModal({
       } else {
         notify('error', msg);
       }
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleOwnerPasswordLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!ownerPassword.trim()) {
+      notify('error', 'Masukkan password Owner terlebih dahulu.');
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      const resp = await fetch('/api/auth/owner-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: OWNER_EMAIL,
+          password: ownerPassword,
+        }),
+      });
+      const json = (await resp.json()) as {
+        token?: string;
+        session?: StaffSession;
+        error?: string;
+      };
+      if (!resp.ok || !json.token || !json.session) {
+        notify('error', json.error || 'Gagal login Owner.');
+        return;
+      }
+      setOwnerPassword('');
+      setUnauthorizedDomain(null);
+      onSessionChange(json.token, json.session);
+      setActiveTab('menu');
+      notify('success', 'Berhasil masuk sebagai Owner Dimsum Mentai 77!');
+    } catch {
+      notify('error', 'Gagal terhubung ke server login Owner.');
     } finally {
       setAuthLoading(false);
     }
@@ -966,19 +1032,92 @@ export function StaffPortalModal({
                             </li>
                           </ol>
 
-                          <a
-                            href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/settings`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="mt-3 inline-flex min-h-[40px] w-full items-center justify-center gap-1.5 rounded-lg border border-[#E6A84C]/50 bg-[#262120] px-3 py-2 text-xs font-semibold text-[#E6A84C] transition-colors hover:bg-[#38302D]"
-                          >
-                            <span>Buka Pengaturan Authorized Domains Firebase</span>
-                            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                          </a>
-                        </div>
-                      )}
+                      <a
+                        href={`https://console.firebase.google.com/project/${FIREBASE_PROJECT_ID}/authentication/settings`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="mt-3 inline-flex min-h-[40px] w-full items-center justify-center gap-1.5 rounded-lg border border-[#E6A84C]/50 bg-[#262120] px-3 py-2 text-xs font-semibold text-[#E6A84C] transition-colors hover:bg-[#38302D]"
+                      >
+                        <span>Buka Pengaturan Authorized Domains Firebase</span>
+                        <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                      </a>
                     </div>
                   )}
+
+                  {/* Alternatif Login Owner Password untuk Vercel */}
+                  <div className="mt-5 border-t border-[#3F3633] pt-4">
+                    <button
+                      type="button"
+                      onClick={() => setShowOwnerFallback((prev) => !prev)}
+                      className="cursor-pointer text-xs font-medium text-[#E6A84C] underline-offset-4 hover:underline"
+                    >
+                      {showOwnerFallback
+                        ? 'Sembunyikan login password Owner'
+                        : 'Alternatif Vercel: Login pakai Password Owner'}
+                    </button>
+
+                    {showOwnerFallback && (
+                      <form
+                        onSubmit={handleOwnerPasswordLogin}
+                        className="mt-4 space-y-3 rounded-xl border border-[#443A37] bg-[#2E2725] p-4 text-left"
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-semibold text-[#F6F2EC]">
+                            Login Owner (Email + Password)
+                          </span>
+                          <span className="font-mono text-[11px] text-[#A79E96]">
+                            {OWNER_EMAIL}
+                          </span>
+                        </div>
+
+                        {hasOwnerPassword === false && (
+                          <p className="rounded-lg border border-[#E6A84C]/35 bg-[#332C29] p-2.5 text-[11px] leading-relaxed text-[#E6A84C]">
+                            Set variabel <code className="font-mono font-bold">OWNER_PASSWORD</code> di
+                            Vercel Environment Variables lalu Redeploy agar opsi ini aktif di semua URL Vercel.
+                          </p>
+                        )}
+
+                        <div className="relative">
+                          <input
+                            type={showOwnerPassword ? 'text' : 'password'}
+                            required
+                            autoComplete="current-password"
+                            value={ownerPassword}
+                            onChange={(e) => setOwnerPassword(e.target.value)}
+                            placeholder="Masukkan Password Owner"
+                            className="h-11 w-full rounded-lg border border-[#443A37] bg-[#332C29] pl-3.5 pr-11 text-sm text-[#F6F2EC] placeholder:text-[#8E847C] focus:border-[#E6A84C] focus:bg-[#262120] focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowOwnerPassword((p) => !p)}
+                            aria-label={
+                              showOwnerPassword ? 'Sembunyikan password' : 'Lihat password'
+                            }
+                            className="absolute right-2.5 top-1/2 -translate-y-1/2 cursor-pointer p-1 text-[#A79E96] hover:text-[#F6F2EC]"
+                          >
+                            {showOwnerPassword ? (
+                              <EyeOff className="h-4 w-4" />
+                            ) : (
+                              <Eye className="h-4 w-4" />
+                            )}
+                          </button>
+                        </div>
+
+                        <button
+                          type="submit"
+                          disabled={authLoading}
+                          className="inline-flex min-h-[42px] w-full cursor-pointer items-center justify-center gap-2 rounded-lg border border-[#E6A84C]/60 bg-[#38302D] px-4 py-2 text-xs font-semibold text-[#F6F2EC] transition-colors hover:bg-[#443A37] disabled:opacity-60"
+                        >
+                          <KeyRound className="h-3.5 w-3.5 text-[#E6A84C]" aria-hidden="true" />
+                          <span>
+                            {authLoading ? 'Memverifikasi...' : 'Masuk Owner dengan Password'}
+                          </span>
+                        </button>
+                      </form>
+                    )}
+                  </div>
+                </div>
+              )}
                 </div>
               ) : (
                 /* Authenticated Dashboard (Staff or Owner) */

@@ -681,6 +681,73 @@ export function createApiApp() {
     }
   });
 
+  // Check whether server-side OWNER_PASSWORD fallback is configured (safe boolean only)
+  app.get('/api/auth/owner-config', (_req, res) => {
+    const configured = Boolean(process.env.OWNER_PASSWORD?.trim());
+    res.json({ hasOwnerPassword: configured });
+  });
+
+  // Owner Email + Password Fallback Login (works on any Vercel URL without Firebase Authorized Domains)
+  app.post('/api/auth/owner-login', (req, res) => {
+    const expectedPassword = process.env.OWNER_PASSWORD?.trim();
+    if (!expectedPassword) {
+      res.status(400).json({
+        error:
+          'OWNER_PASSWORD belum diatur di Environment Variables Vercel. Tambahkan OWNER_PASSWORD di Project Settings Vercel lalu Redeploy, atau tambahkan domain ini ke Firebase Authorized Domains.',
+      });
+      return;
+    }
+
+    const { email, password } = req.body as {
+      email?: string;
+      password?: string;
+    };
+    const cleanEmail = String(email || '').trim().toLowerCase();
+    const cleanPassword = String(password || '');
+
+    if (!cleanEmail || !cleanPassword) {
+      res.status(400).json({ error: 'Email dan password Owner wajib diisi.' });
+      return;
+    }
+
+    if (cleanEmail !== OWNER_EMAIL.toLowerCase()) {
+      res.status(403).json({
+        error: `Hanya email Owner resmi (${OWNER_EMAIL}) yang diizinkan.`,
+      });
+      return;
+    }
+
+    const inputDigest = crypto.createHash('sha256').update(cleanPassword).digest();
+    const expectedDigest = crypto
+      .createHash('sha256')
+      .update(expectedPassword)
+      .digest();
+
+    if (!crypto.timingSafeEqual(inputDigest, expectedDigest)) {
+      res.status(401).json({ error: 'Password Owner salah.' });
+      return;
+    }
+
+    const sessionPayload: SessionPayload = {
+      role: 'owner',
+      uid: 'owner-password',
+      username: OWNER_EMAIL,
+      displayName: 'Owner Dimsum 77',
+      exp: Date.now() + 1000 * 60 * 60 * 24 * 7,
+    };
+
+    const token = signSession(sessionPayload);
+    res.json({
+      token,
+      session: {
+        role: sessionPayload.role,
+        uid: sessionPayload.uid,
+        username: sessionPayload.username,
+        displayName: sessionPayload.displayName,
+      },
+    });
+  });
+
   // --- OWNER-ONLY STAFF USER ACCOUNT MANAGEMENT ---
   app.get('/api/staff-accounts', requireOwnerOnly, (_req, res) => {
     const data = readStore();
