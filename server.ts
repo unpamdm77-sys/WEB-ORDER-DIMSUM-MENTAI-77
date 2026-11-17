@@ -1,7 +1,7 @@
 import http from 'node:http';
 import path from 'node:path';
 import express from 'express';
-import { createApiApp } from './server/createApiApp.ts';
+import { createApiApp } from './api/index.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const ROOT_DIR = process.cwd();
