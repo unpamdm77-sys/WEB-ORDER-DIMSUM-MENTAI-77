@@ -51,7 +51,7 @@ service cloud.firestore {
       && data.name is string && data.name.size() >= 2 && data.name.size() <= 100
       && data.category in ['Mentai Series', 'Goreng & Crispy', 'Special & Kuah', 'Paket & Cake', 'Add-On']
       && data.description is string && data.description.size() <= 300
-      && data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 500
+      && data.imageUrl is string && data.imageUrl.size() >= 1 && data.imageUrl.size() <= 400000
       && data.variants is list && data.variants.size() >= 1 && data.variants.size() <= 10
       && data.variants[0] is map
       && data.variants[0].keys().hasAll(['label', 'price'])

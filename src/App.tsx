@@ -10,9 +10,9 @@ import { OpeningSplash } from './components/OpeningSplash';
 import { DimsumKamonCrest } from './components/OrientalAccents';
 import { PackagesAndPosterSection } from './components/PackagesAndPosterSection';
 import { StaffPortalModal } from './components/StaffPortalModal';
-import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
+import { collection, doc, onSnapshot } from 'firebase/firestore';
 import { DEFAULT_MENU_ITEMS, DEFAULT_STORE_SETTINGS } from './data/defaultData';
-import { db, testFirestoreConnection } from './firebase';
+import { OperationType, db, handleFirestoreError, testFirestoreConnection } from './firebase';
 import {
   CartItem,
   MenuItem,
@@ -27,8 +27,10 @@ const STAFF_TOKEN_KEY = 'dm77_staff_token_v1';
 
 export default function App() {
   const [showSplash, setShowSplash] = useState(true);
-  const [menuItems, setMenuItems] = useState<MenuItem[]>(DEFAULT_MENU_ITEMS);
-  const [settings, setSettings] = useState<StoreSettings>(DEFAULT_STORE_SETTINGS);
+  const [baseMenuItems, setBaseMenuItems] = useState<MenuItem[]>(DEFAULT_MENU_ITEMS);
+  const [cloudMenuMap, setCloudMenuMap] = useState<Map<string, MenuItem> | null>(null);
+  const [baseSettings, setBaseSettings] = useState<StoreSettings>(DEFAULT_STORE_SETTINGS);
+  const [cloudSettings, setCloudSettings] = useState<Partial<StoreSettings> | null>(null);
   const [cart, setCart] = useState<CartItem[]>(() => {
     try {
       const saved = localStorage.getItem(CART_STORAGE_KEY);
@@ -56,6 +58,47 @@ export default function App() {
   });
   const [staffSession, setStaffSession] = useState<StaffSession | null>(null);
 
+  const menuItems = useMemo(() => {
+    const merged = new Map<string, MenuItem>();
+    for (const item of baseMenuItems) {
+      merged.set(item.id, item);
+    }
+    if (cloudMenuMap) {
+      cloudMenuMap.forEach((cloudItem, id) => {
+        merged.set(id, cloudItem);
+      });
+    }
+    return Array.from(merged.values()).sort((a, b) => a.sortOrder - b.sortOrder);
+  }, [baseMenuItems, cloudMenuMap]);
+
+  const settings = useMemo<StoreSettings>(() => {
+    if (!cloudSettings) return baseSettings;
+    return {
+      storeName: cloudSettings.storeName || baseSettings.storeName,
+      tagline: cloudSettings.tagline || baseSettings.tagline,
+      whatsappNumber: cloudSettings.whatsappNumber || baseSettings.whatsappNumber,
+      instagramHandle: cloudSettings.instagramHandle || baseSettings.instagramHandle,
+      instagramUrl: cloudSettings.instagramUrl || baseSettings.instagramUrl,
+      tiktokHandle: cloudSettings.tiktokHandle || baseSettings.tiktokHandle,
+      tiktokUrl: cloudSettings.tiktokUrl || baseSettings.tiktokUrl,
+      mapsUrl: cloudSettings.mapsUrl || baseSettings.mapsUrl,
+      addressNote: cloudSettings.addressNote || baseSettings.addressNote,
+      openHours: cloudSettings.openHours || baseSettings.openHours,
+      announcement: cloudSettings.announcement ?? baseSettings.announcement,
+      gofoodUrl: cloudSettings.gofoodUrl ?? baseSettings.gofoodUrl,
+      shopeefoodUrl: cloudSettings.shopeefoodUrl ?? baseSettings.shopeefoodUrl,
+      grabfoodUrl: cloudSettings.grabfoodUrl ?? baseSettings.grabfoodUrl,
+    };
+  }, [baseSettings, cloudSettings]);
+
+  const handleMenuUpdated = useCallback((nextItems: MenuItem[]) => {
+    setBaseMenuItems(nextItems);
+  }, []);
+
+  const handleSettingsUpdated = useCallback((nextSettings: StoreSettings) => {
+    setBaseSettings(nextSettings);
+  }, []);
+
   // Persist cart locally
   useEffect(() => {
     try {
@@ -75,93 +118,82 @@ export default function App() {
     };
   }, []);
 
-  // Load persisted storefront data from server AND merge Cloud Firestore so uploaded photos & edits survive AI Studio updates / Vercel redeploys
+  // Load baseline storefront from server AND subscribe in real time to Firebase Cloud Firestore
   useEffect(() => {
     let active = true;
     (async () => {
-      let mergedItems = [...DEFAULT_MENU_ITEMS];
-      let mergedSettings = { ...DEFAULT_STORE_SETTINGS };
-
       try {
         const resp = await fetch('/api/storefront');
-        if (resp.ok) {
-          const json = (await resp.json()) as {
-            menuItems?: MenuItem[];
-            settings?: StoreSettings;
-          };
-          if (Array.isArray(json.menuItems) && json.menuItems.length > 0) {
-            mergedItems = json.menuItems;
-          }
-          if (json.settings) {
-            mergedSettings = { ...mergedSettings, ...json.settings };
-          }
+        if (!resp.ok || !active) return;
+        const json = (await resp.json()) as {
+          menuItems?: MenuItem[];
+          settings?: StoreSettings;
+        };
+        if (!active) return;
+        if (Array.isArray(json.menuItems) && json.menuItems.length > 0) {
+          setBaseMenuItems(json.menuItems);
+        }
+        if (json.settings) {
+          setBaseSettings((prev) => ({ ...prev, ...json.settings }));
         }
       } catch {
-        // Fallback smoothly to defaultData
+        // Fallback smoothly to DEFAULT_MENU_ITEMS + Firestore
       }
-
-      // Overlay persisted Cloud Firestore menu_items & store_settings (highest priority)
-      try {
-        const [menuSnap, settingsSnap] = await Promise.all([
-          getDocs(collection(db, 'menu_items')),
-          getDoc(doc(db, 'store_settings', 'main')),
-        ]);
-
-        if (!menuSnap.empty) {
-          const itemMap = new Map<string, MenuItem>();
-          for (const base of mergedItems) {
-            itemMap.set(base.id, base);
-          }
-          menuSnap.forEach((docSnap) => {
-            const d = docSnap.data() as Partial<MenuItem>;
-            if (typeof d.name === 'string' && Array.isArray(d.variants)) {
-              itemMap.set(docSnap.id, {
-                id: docSnap.id,
-                name: d.name,
-                category: d.category || 'Mentai Series',
-                description: d.description || '',
-                imageUrl: d.imageUrl || DEFAULT_MENU_ITEMS[0].imageUrl,
-                variants: d.variants,
-                popular: Boolean(d.popular),
-                available: d.available !== false,
-                sortOrder: typeof d.sortOrder === 'number' ? d.sortOrder : 99,
-              });
-            }
-          });
-          mergedItems = Array.from(itemMap.values()).sort(
-            (a, b) => a.sortOrder - b.sortOrder
-          );
-        }
-
-        if (settingsSnap.exists()) {
-          const cloudSettings = settingsSnap.data() as Partial<StoreSettings>;
-          mergedSettings = {
-            storeName: cloudSettings.storeName || mergedSettings.storeName,
-            tagline: cloudSettings.tagline || mergedSettings.tagline,
-            whatsappNumber: cloudSettings.whatsappNumber || mergedSettings.whatsappNumber,
-            instagramHandle: cloudSettings.instagramHandle || mergedSettings.instagramHandle,
-            instagramUrl: cloudSettings.instagramUrl || mergedSettings.instagramUrl,
-            tiktokHandle: cloudSettings.tiktokHandle || mergedSettings.tiktokHandle,
-            tiktokUrl: cloudSettings.tiktokUrl || mergedSettings.tiktokUrl,
-            mapsUrl: cloudSettings.mapsUrl || mergedSettings.mapsUrl,
-            addressNote: cloudSettings.addressNote || mergedSettings.addressNote,
-            openHours: cloudSettings.openHours || mergedSettings.openHours,
-            announcement: cloudSettings.announcement ?? mergedSettings.announcement,
-            gofoodUrl: cloudSettings.gofoodUrl ?? mergedSettings.gofoodUrl,
-            shopeefoodUrl: cloudSettings.shopeefoodUrl ?? mergedSettings.shopeefoodUrl,
-            grabfoodUrl: cloudSettings.grabfoodUrl ?? mergedSettings.grabfoodUrl,
-          };
-        }
-      } catch {
-        // Keep API/default data if Firestore is unreachable
-      }
-
-      if (!active) return;
-      setMenuItems(mergedItems);
-      setSettings(mergedSettings);
     })();
+
+    const unsubMenu = onSnapshot(
+      collection(db, 'menu_items'),
+      (menuSnap) => {
+        if (!active) return;
+        const nextCloud = new Map<string, MenuItem>();
+        menuSnap.forEach((docSnap) => {
+          const d = docSnap.data() as Partial<MenuItem>;
+          if (typeof d.name === 'string' && Array.isArray(d.variants)) {
+            nextCloud.set(docSnap.id, {
+              id: docSnap.id,
+              name: d.name,
+              category: d.category || 'Mentai Series',
+              description: d.description || '',
+              imageUrl: d.imageUrl || DEFAULT_MENU_ITEMS[0].imageUrl,
+              variants: d.variants,
+              popular: Boolean(d.popular),
+              available: d.available !== false,
+              sortOrder: typeof d.sortOrder === 'number' ? d.sortOrder : 99,
+            });
+          }
+        });
+        setCloudMenuMap(nextCloud);
+      },
+      (error) => {
+        try {
+          handleFirestoreError(error, OperationType.GET, 'menu_items');
+        } catch {
+          // Logged with full context inside handleFirestoreError
+        }
+      }
+    );
+
+    const unsubSettings = onSnapshot(
+      doc(db, 'store_settings', 'main'),
+      (settingsSnap) => {
+        if (!active) return;
+        if (settingsSnap.exists()) {
+          setCloudSettings(settingsSnap.data() as Partial<StoreSettings>);
+        }
+      },
+      (error) => {
+        try {
+          handleFirestoreError(error, OperationType.GET, 'store_settings/main');
+        } catch {
+          // Logged with full context inside handleFirestoreError
+        }
+      }
+    );
+
     return () => {
       active = false;
+      unsubMenu();
+      unsubSettings();
     };
   }, []);
 
@@ -438,9 +470,9 @@ export default function App() {
         authToken={authToken}
         onSessionChange={handleSessionChange}
         menuItems={menuItems}
-        onMenuUpdated={setMenuItems}
+        onMenuUpdated={handleMenuUpdated}
         settings={settings}
-        onSettingsUpdated={setSettings}
+        onSettingsUpdated={handleSettingsUpdated}
       />
     </div>
   );
