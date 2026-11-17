@@ -1,7 +1,8 @@
-import { ExternalLink, Eye, MessageCircle, X } from 'lucide-react';
+import { ExternalLink, Eye, MessageCircle, Utensils, X } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
-import { StoreSettings } from '../types';
-import { buildDirectWhatsAppUrl } from '../utils/whatsapp';
+import { useEffect, useMemo, useState } from 'react';
+import { MenuItem, StoreSettings } from '../types';
+import { buildDirectWhatsAppUrl, formatRupiah } from '../utils/whatsapp';
 import {
   AsanohaBackdrop,
   BrushUnderline,
@@ -11,20 +12,62 @@ import {
 
 interface PackagesAndPosterSectionProps {
   settings: StoreSettings;
+  menuItems: MenuItem[];
   posterOpen: boolean;
   onOpenPoster: () => void;
   onClosePoster: () => void;
 }
 
+const FALLBACK_PARTY_IMAGE =
+  '/src/assets/images/menu_dimsum_party_cake_1794850385246.jpg';
+
 export function PackagesAndPosterSection({
   settings,
+  menuItems,
   posterOpen,
   onOpenPoster,
   onClosePoster,
 }: PackagesAndPosterSectionProps) {
+  const [birthdayImgError, setBirthdayImgError] = useState(false);
+  const [mixAllImgError, setMixAllImgError] = useState(false);
+
+  const birthdayItem = useMemo(
+    () =>
+      menuItems.find((item) => item.id === 'dimsum-birthday-cake') ||
+      menuItems.find((item) => /birthday/i.test(item.name)),
+    [menuItems]
+  );
+
+  const mixAllItem = useMemo(
+    () =>
+      menuItems.find((item) => item.id === 'dimsum-mix-all-varian') ||
+      menuItems.find((item) => /mix\s*all|all\s*varian/i.test(item.name)),
+    [menuItems]
+  );
+
+  const birthdayTitle = birthdayItem?.name || 'Dimsum Birthday Cake';
+  const birthdayPrice = birthdayItem?.variants?.[0]?.price ?? 85000;
+  const birthdayVariantLabel = birthdayItem?.variants?.[0]?.label || 'Isi 16';
+  const birthdayImage = birthdayItem?.imageUrl || FALLBACK_PARTY_IMAGE;
+
+  const mixAllTitle = mixAllItem?.name || 'Dimsum Mix All Varian';
+  const mixAllPrice = mixAllItem?.variants?.[0]?.price ?? 90000;
+  const mixAllVariantLabel = mixAllItem?.variants?.[0]?.label || 'Isi 16';
+  const mixAllImage = mixAllItem?.imageUrl || FALLBACK_PARTY_IMAGE;
+
+  useEffect(() => {
+    setBirthdayImgError(false);
+  }, [birthdayImage]);
+
+  useEffect(() => {
+    setMixAllImgError(false);
+  }, [mixAllImage]);
+
   const birthdayWaUrl = buildDirectWhatsAppUrl(
     settings.whatsappNumber,
-    'Halo Dimsum Mentai 77 UNPAM! Saya mau pesan Dimsum Birthday Cake (Isi 16 - Rp85.000) / Paket Mix All Varian. Bisa dibantu request ucapan?'
+    `Halo Dimsum Mentai 77 UNPAM! Saya mau pesan ${birthdayTitle} (${birthdayVariantLabel} - ${formatRupiah(
+      birthdayPrice
+    )}) / ${mixAllTitle}. Bisa dibantu request ucapan?`
   );
 
   return (
@@ -38,7 +81,7 @@ export function PackagesAndPosterSection({
 
       <div className="relative mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
         <div className="grid grid-cols-1 items-stretch gap-8 lg:grid-cols-12 lg:gap-10">
-          {/* Left Featured Party Box Image with Stepped Fret Frame */}
+          {/* Left Featured Showcase: Uploaded Photos from Birthday Cake & Mix All Varian */}
           <motion.div
             initial={{ opacity: 0, x: -16 }}
             whileInView={{ opacity: 1, x: 0 }}
@@ -46,14 +89,64 @@ export function PackagesAndPosterSection({
             transition={{ duration: 0.4 }}
             className="lg:col-span-6"
           >
-            <div className="relative h-full min-h-[260px] overflow-hidden rounded-2xl border border-[#E6A84C]/35 bg-[#2B2523] shadow-lg">
-              <CornerFretAccent colorClass="text-[#E6A84C]/80" />
-              <img
-                src="/src/assets/images/menu_dimsum_party_cake_1794850385246.jpg"
-                alt="Dimsum Birthday Cake dan Mix All Varian Isi 16 Dimsum Mentai 77"
-                referrerPolicy="no-referrer"
-                className="h-full w-full object-cover"
-              />
+            <div className="grid h-full grid-cols-2 gap-3 sm:gap-4">
+              {/* Photo 1: Dimsum Birthday Cake (live from uploaded menu item) */}
+              <div className="group relative flex min-h-[240px] flex-col overflow-hidden rounded-2xl border border-[#E6A84C]/35 bg-[#2B2523] shadow-lg sm:min-h-[320px]">
+                <CornerFretAccent colorClass="text-[#E6A84C]/80" />
+                {!birthdayImgError && birthdayImage ? (
+                  <img
+                    src={birthdayImage}
+                    alt={birthdayTitle}
+                    referrerPolicy="no-referrer"
+                    onError={() => setBirthdayImgError(true)}
+                    className="h-full w-full flex-1 object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04]"
+                  />
+                ) : (
+                  <div className="flex flex-1 flex-col items-center justify-center gap-2 bg-[#2B2523] p-4 text-center">
+                    <Utensils className="h-6 w-6 text-[#E6A84C]" aria-hidden="true" />
+                    <span className="font-display text-xs font-semibold text-[#F6F2EC]">
+                      {birthdayTitle}
+                    </span>
+                  </div>
+                )}
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#171312]/95 via-[#171312]/65 to-transparent p-3 pt-10">
+                  <p className="truncate font-display text-xs font-bold text-[#F6F2EC] sm:text-sm">
+                    {birthdayTitle}
+                  </p>
+                  <p className="font-mono tabular-nums text-[11px] font-semibold text-[#E6A84C] sm:text-xs">
+                    {formatRupiah(birthdayPrice)} · {birthdayVariantLabel}
+                  </p>
+                </div>
+              </div>
+
+              {/* Photo 2: Dimsum Mix All Varian (live from uploaded menu item) */}
+              <div className="group relative flex min-h-[240px] flex-col overflow-hidden rounded-2xl border border-[#E6A84C]/35 bg-[#2B2523] shadow-lg sm:min-h-[320px]">
+                <CornerFretAccent colorClass="text-[#E6A84C]/80" />
+                {!mixAllImgError && mixAllImage ? (
+                  <img
+                    src={mixAllImage}
+                    alt={mixAllTitle}
+                    referrerPolicy="no-referrer"
+                    onError={() => setMixAllImgError(true)}
+                    className="h-full w-full flex-1 object-cover transition-transform duration-300 ease-out group-hover:scale-[1.04]"
+                  />
+                ) : (
+                  <div className="flex flex-1 flex-col items-center justify-center gap-2 bg-[#2B2523] p-4 text-center">
+                    <Utensils className="h-6 w-6 text-[#E6A84C]" aria-hidden="true" />
+                    <span className="font-display text-xs font-semibold text-[#F6F2EC]">
+                      {mixAllTitle}
+                    </span>
+                  </div>
+                )}
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-[#171312]/95 via-[#171312]/65 to-transparent p-3 pt-10">
+                  <p className="truncate font-display text-xs font-bold text-[#F6F2EC] sm:text-sm">
+                    {mixAllTitle}
+                  </p>
+                  <p className="font-mono tabular-nums text-[11px] font-semibold text-[#E6A84C] sm:text-xs">
+                    {formatRupiah(mixAllPrice)} · {mixAllVariantLabel}
+                  </p>
+                </div>
+              </div>
             </div>
           </motion.div>
 
@@ -80,18 +173,22 @@ export function PackagesAndPosterSection({
 
             <div className="mt-6 grid grid-cols-2 gap-4 border-y border-[#3D3532] py-4">
               <div>
-                <p className="text-xs text-[#A79E96]">Dimsum Birthday Cake</p>
+                <p className="text-xs text-[#A79E96]">{birthdayTitle}</p>
                 <p className="mt-0.5 font-mono tabular-nums text-lg font-semibold text-[#E6A84C]">
-                  Rp85.000
+                  {formatRupiah(birthdayPrice)}
                 </p>
-                <p className="text-xs text-[#C5BCB4]">Isi 16 + Topper Ucapan</p>
+                <p className="text-xs text-[#C5BCB4]">
+                  {birthdayVariantLabel} + Topper Ucapan
+                </p>
               </div>
               <div>
-                <p className="text-xs text-[#A79E96]">Dimsum Mix All Varian</p>
+                <p className="text-xs text-[#A79E96]">{mixAllTitle}</p>
                 <p className="mt-0.5 font-mono tabular-nums text-lg font-semibold text-[#E6A84C]">
-                  Rp90.000
+                  {formatRupiah(mixAllPrice)}
                 </p>
-                <p className="text-xs text-[#C5BCB4]">Isi 16 Semua Rasa</p>
+                <p className="text-xs text-[#C5BCB4]">
+                  {mixAllVariantLabel} Semua Rasa
+                </p>
               </div>
             </div>
 

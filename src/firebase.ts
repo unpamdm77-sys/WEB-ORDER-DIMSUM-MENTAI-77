@@ -1,15 +1,107 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider } from 'firebase/auth';
+import {
+  GoogleAuthProvider,
+  User,
+  getAuth,
+  onAuthStateChanged,
+  signInWithPopup,
+} from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
 import firebaseConfig from '../firebase-applet-config.json';
 
+export const DRIVE_SCOPES = [
+  'https://www.googleapis.com/auth/drive',
+  'https://www.googleapis.com/auth/drive.activity',
+  'https://www.googleapis.com/auth/drive.activity.readonly',
+  'https://www.googleapis.com/auth/drive.appdata',
+  'https://www.googleapis.com/auth/drive.apps.readonly',
+  'https://www.googleapis.com/auth/drive.file',
+  'https://www.googleapis.com/auth/drive.install',
+  'https://www.googleapis.com/auth/drive.meet.readonly',
+  'https://www.googleapis.com/auth/drive.metadata',
+  'https://www.googleapis.com/auth/drive.metadata.readonly',
+  'https://www.googleapis.com/auth/drive.photos.readonly',
+  'https://www.googleapis.com/auth/drive.readonly',
+  'https://www.googleapis.com/auth/drive.scripts',
+] as const;
+
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+const firestoreDatabaseId = (
+  firebaseConfig as { firestoreDatabaseId?: string }
+).firestoreDatabaseId;
+export const db = firestoreDatabaseId
+  ? getFirestore(app, firestoreDatabaseId)
+  : getFirestore(app);
 export const auth = getAuth(app);
+
 export const googleProvider = new GoogleAuthProvider();
+for (const scope of DRIVE_SCOPES) {
+  googleProvider.addScope(scope);
+}
 googleProvider.setCustomParameters({
   prompt: 'select_account',
 });
+
+// In-memory cache ONLY for Google Drive OAuth access token (never stored in localStorage/sessionStorage)
+let cachedDriveAccessToken: string | null = null;
+let isSigningIn = false;
+
+export function setDriveAccessToken(token: string | null) {
+  cachedDriveAccessToken = token;
+}
+
+export function getDriveAccessToken(): string | null {
+  return cachedDriveAccessToken;
+}
+
+export function clearDriveAccessToken() {
+  cachedDriveAccessToken = null;
+}
+
+export function captureDriveTokenFromResult(
+  result: Awaited<ReturnType<typeof signInWithPopup>> | null
+): string | null {
+  if (!result) return null;
+  const credential = GoogleAuthProvider.credentialFromResult(result);
+  if (credential?.accessToken) {
+    cachedDriveAccessToken = credential.accessToken;
+    return credential.accessToken;
+  }
+  return null;
+}
+
+export function initDriveAuth(
+  onAuthSuccess?: (user: User, token: string) => void,
+  onAuthCleared?: () => void
+) {
+  return onAuthStateChanged(auth, (user) => {
+    if (user && cachedDriveAccessToken) {
+      onAuthSuccess?.(user, cachedDriveAccessToken);
+    } else if (!user && !isSigningIn) {
+      cachedDriveAccessToken = null;
+      onAuthCleared?.();
+    } else if (user && !cachedDriveAccessToken && !isSigningIn) {
+      onAuthCleared?.();
+    }
+  });
+}
+
+export async function signInWithGoogleDrive(): Promise<{
+  user: User;
+  accessToken: string;
+}> {
+  isSigningIn = true;
+  try {
+    const result = await signInWithPopup(auth, googleProvider);
+    const accessToken = captureDriveTokenFromResult(result);
+    if (!accessToken) {
+      throw new Error('Gagal mendapatkan token akses Google Drive dari Google Sign-In.');
+    }
+    return { user: result.user, accessToken };
+  } finally {
+    isSigningIn = false;
+  }
+}
 
 export enum OperationType {
   CREATE = 'create',

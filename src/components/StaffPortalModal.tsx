@@ -6,18 +6,25 @@ import {
 } from 'firebase/auth';
 import { doc, serverTimestamp, setDoc, deleteDoc } from 'firebase/firestore';
 import {
+  AlertTriangle,
   Check,
+  Cloud,
   Copy,
   Edit3,
   ExternalLink,
   Eye,
   EyeOff,
+  FolderOpen,
+  HardDrive,
   ImagePlus,
   KeyRound,
+  Lock,
   LogIn,
   LogOut,
   Plus,
+  RefreshCw,
   RotateCcw,
+  Search,
   ShieldCheck,
   Trash2,
   Upload,
@@ -36,8 +43,13 @@ import {
   FIREBASE_PROJECT_ID,
   OWNER_EMAIL,
   auth,
+  captureDriveTokenFromResult,
+  clearDriveAccessToken,
   db,
+  getDriveAccessToken,
   googleProvider,
+  initDriveAuth,
+  signInWithGoogleDrive,
 } from '../firebase';
 import {
   MenuCategory,
@@ -47,6 +59,14 @@ import {
   StaffSession,
   StoreSettings,
 } from '../types';
+import {
+  DriveImageFile,
+  backupCatalogToDrive,
+  deleteDriveFile,
+  listDriveImageFiles,
+  shareDriveFilePublicly,
+  uploadImageToDrive,
+} from '../utils/googleDrive';
 import { formatRupiah } from '../utils/whatsapp';
 
 interface StaffPortalModalProps {
@@ -130,9 +150,29 @@ export function StaffPortalModal({
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [menuForm, setMenuForm] = useState<Omit<MenuItem, 'id'>>(EMPTY_FORM);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmResetDefault, setConfirmResetDefault] = useState(false);
   const [savingMenu, setSavingMenu] = useState(false);
   const [uploadingImage, setUploadingImage] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Google Drive & Permanent Cloud Lock State (token kept strictly in-memory)
+  const [driveToken, setDriveToken] = useState<string | null>(() =>
+    getDriveAccessToken()
+  );
+  const [connectingDrive, setConnectingDrive] = useState(false);
+  const [drivePickerOpen, setDrivePickerOpen] = useState(false);
+  const [driveFiles, setDriveFiles] = useState<DriveImageFile[]>([]);
+  const [driveSearch, setDriveSearch] = useState('');
+  const [loadingDriveFiles, setLoadingDriveFiles] = useState(false);
+  const [driveConfirmDialog, setDriveConfirmDialog] = useState<
+    | { kind: 'upload'; file: File }
+    | { kind: 'share-pick'; driveFile: DriveImageFile }
+    | { kind: 'delete'; driveFile: DriveImageFile }
+    | { kind: 'backup' }
+    | null
+  >(null);
+  const [processingDriveAction, setProcessingDriveAction] = useState(false);
+  const [syncingCloud, setSyncingCloud] = useState(false);
 
   // Contact Settings Form State
   const [contactForm, setContactForm] = useState<StoreSettings>(settings);
@@ -149,6 +189,9 @@ export function StaffPortalModal({
   const [savingAccount, setSavingAccount] = useState(false);
 
   const isOwner = session?.role === 'owner';
+  const isOwnerFirebaseSignedIn =
+    isOwner &&
+    auth.currentUser?.email?.toLowerCase() === OWNER_EMAIL.toLowerCase();
 
   useEffect(() => {
     setContactForm(settings);
@@ -183,6 +226,15 @@ export function StaffPortalModal({
       setLoadingAccounts(false);
     }
   };
+
+  useEffect(() => {
+    setDriveToken(getDriveAccessToken());
+    const unsub = initDriveAuth(
+      (_user, token) => setDriveToken(token),
+      () => setDriveToken(getDriveAccessToken())
+    );
+    return () => unsub();
+  }, [open]);
 
   useEffect(() => {
     if (open && isOwner && authToken && activeTab === 'accounts') {
@@ -283,6 +335,8 @@ export function StaffPortalModal({
         const redirectCred = await getRedirectResult(auth);
         if (!active || !redirectCred?.user) return;
         setAuthLoading(true);
+        const token = captureDriveTokenFromResult(redirectCred);
+        if (token) setDriveToken(token);
         await completeOwnerSessionVerification(
           redirectCred.user.email,
           () => redirectCred.user.getIdToken()
@@ -309,6 +363,8 @@ export function StaffPortalModal({
     setUnauthorizedDomain(null);
     try {
       const cred = await signInWithPopup(auth, googleProvider);
+      const token = captureDriveTokenFromResult(cred);
+      if (token) setDriveToken(token);
       await completeOwnerSessionVerification(
         cred.user.email,
         () => cred.user.getIdToken()
@@ -399,6 +455,10 @@ export function StaffPortalModal({
   };
 
   const handleSignOut = async () => {
+    clearDriveAccessToken();
+    setDriveToken(null);
+    setDrivePickerOpen(false);
+    setDriveFiles([]);
     try {
       if (auth.currentUser) {
         await signOut(auth);
@@ -412,22 +472,82 @@ export function StaffPortalModal({
     notify('success', 'Anda telah keluar.');
   };
 
-  // --- IMAGE UPLOAD HANDLER ---
-  const handleImageFileSelect = async (
-    e: React.ChangeEvent<HTMLInputElement>
-  ) => {
-    const file = e.target.files?.[0];
-    if (!file || !authToken) return;
-
-    if (!file.type.startsWith('image/')) {
-      notify('error', 'Pilih file gambar (JPG, PNG, WEBP).');
-      return;
+  // --- GOOGLE DRIVE AUTH, PICKER, UPLOAD, DELETE & BACKUP ---
+  const loadDriveFiles = async (tokenOverride?: string, queryOverride?: string) => {
+    const activeToken = tokenOverride || driveToken || getDriveAccessToken();
+    if (!activeToken) return;
+    setLoadingDriveFiles(true);
+    try {
+      const files = await listDriveImageFiles(
+        activeToken,
+        queryOverride !== undefined ? queryOverride : driveSearch
+      );
+      setDriveFiles(files);
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : 'Gagal memuat foto dari Google Drive.';
+      if (msg.toLowerCase().includes('credential') || msg.toLowerCase().includes('unauthorized') || msg.includes('401')) {
+        clearDriveAccessToken();
+        setDriveToken(null);
+      }
+      notify('error', msg);
+    } finally {
+      setLoadingDriveFiles(false);
     }
-    if (file.size > 5 * 1024 * 1024) {
-      notify('error', 'Ukuran file gambar maksimal 5 MB.');
-      return;
-    }
+  };
 
+  const handleConnectGoogleDrive = async () => {
+    setConnectingDrive(true);
+    try {
+      const { user, accessToken } = await signInWithGoogleDrive();
+      setDriveToken(accessToken);
+      notify(
+        'success',
+        `Google Drive terhubung (${user.email || 'Akun Google'}). Foto menu siap disimpan permanen!`
+      );
+      if (drivePickerOpen) {
+        await loadDriveFiles(accessToken);
+      }
+    } catch (err) {
+      const code = (err as { code?: string })?.code || '';
+      const msg =
+        err instanceof Error ? err.message : 'Gagal menghubungkan Google Drive.';
+      if (code === 'auth/unauthorized-domain' || msg.includes('unauthorized-domain')) {
+        notify(
+          'error',
+          `Domain "${window.location.hostname}" belum ditambahkan di Firebase Authorized domains.`
+        );
+      } else if (
+        code !== 'auth/popup-closed-by-user' &&
+        code !== 'auth/cancelled-popup-request'
+      ) {
+        notify('error', msg);
+      }
+    } finally {
+      setConnectingDrive(false);
+    }
+  };
+
+  const handleOpenDrivePicker = async () => {
+    const nextOpen = !drivePickerOpen;
+    setDrivePickerOpen(nextOpen);
+    if (nextOpen && driveToken) {
+      await loadDriveFiles(driveToken, driveSearch);
+    }
+  };
+
+  const handleSelectDriveFile = (file: DriveImageFile) => {
+    if (file.sharedPublicly) {
+      setMenuForm((prev) => ({ ...prev, imageUrl: file.imageUrl }));
+      setDrivePickerOpen(false);
+      notify('success', `Foto "${file.name}" dari Google Drive dipasang ke menu!`);
+    } else {
+      setDriveConfirmDialog({ kind: 'share-pick', driveFile: file });
+    }
+  };
+
+  const uploadToLocalFallback = async (file: File) => {
+    if (!authToken) return;
     setUploadingImage(true);
     try {
       const dataUrl = await new Promise<string>((resolve, reject) => {
@@ -454,7 +574,10 @@ export function StaffPortalModal({
         return;
       }
       setMenuForm((prev) => ({ ...prev, imageUrl: json.url! }));
-      notify('success', 'Foto menu berhasil diunggah!');
+      notify(
+        'success',
+        'Foto dipasang sementara. Hubungkan Google Drive agar foto terkunci permanen saat update AI Studio/Vercel!'
+      );
     } catch (err) {
       notify(
         'error',
@@ -462,9 +585,182 @@ export function StaffPortalModal({
       );
     } finally {
       setUploadingImage(false);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+    }
+  };
+
+  // --- IMAGE UPLOAD HANDLER ---
+  const handleImageFileSelect = async (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const file = e.target.files?.[0];
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+    if (!file || !authToken) return;
+
+    if (!file.type.startsWith('image/')) {
+      notify('error', 'Pilih file gambar (JPG, PNG, WEBP).');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      notify('error', 'Ukuran file gambar maksimal 5 MB.');
+      return;
+    }
+
+    const activeToken = driveToken || getDriveAccessToken();
+    if (activeToken) {
+      // Mandatory explicit confirmation dialog before mutating Google Drive
+      setDriveConfirmDialog({ kind: 'upload', file });
+      return;
+    }
+
+    await uploadToLocalFallback(file);
+  };
+
+  const executeDriveConfirmAction = async () => {
+    if (!driveConfirmDialog) return;
+    const activeToken = driveToken || getDriveAccessToken();
+    if (!activeToken) {
+      setDriveConfirmDialog(null);
+      notify('error', 'Sesi Google Drive belum aktif. Klik "Sign in with Google" terlebih dahulu.');
+      return;
+    }
+
+    setProcessingDriveAction(true);
+    try {
+      if (driveConfirmDialog.kind === 'upload') {
+        setUploadingImage(true);
+        const uploaded = await uploadImageToDrive(
+          activeToken,
+          driveConfirmDialog.file,
+          menuForm.name.trim() || undefined
+        );
+        setMenuForm((prev) => ({ ...prev, imageUrl: uploaded.imageUrl }));
+        if (drivePickerOpen) {
+          setDriveFiles((prev) => [uploaded, ...prev]);
+        }
+        notify(
+          'success',
+          `Foto "${uploaded.name}" berhasil disimpan ke Google Drive (folder Dimsum Mentai 77 Menu)!`
+        );
+      } else if (driveConfirmDialog.kind === 'share-pick') {
+        const target = driveConfirmDialog.driveFile;
+        await shareDriveFilePublicly(activeToken, target.id);
+        setDriveFiles((prev) =>
+          prev.map((f) =>
+            f.id === target.id ? { ...f, sharedPublicly: true } : f
+          )
+        );
+        setMenuForm((prev) => ({ ...prev, imageUrl: target.imageUrl }));
+        setDrivePickerOpen(false);
+        notify(
+          'success',
+          `Akses publik diatur & foto "${target.name}" dipasang ke menu!`
+        );
+      } else if (driveConfirmDialog.kind === 'delete') {
+        const target = driveConfirmDialog.driveFile;
+        await deleteDriveFile(activeToken, target.id);
+        setDriveFiles((prev) => prev.filter((f) => f.id !== target.id));
+        notify('success', `Foto "${target.name}" dihapus dari Google Drive.`);
+      } else if (driveConfirmDialog.kind === 'backup') {
+        const result = await backupCatalogToDrive(activeToken, {
+          exportedAt: new Date().toISOString(),
+          storeSettings: settings,
+          menuItems,
+        });
+        notify(
+          'success',
+          `Backup katalog "${result.name}" tersimpan di Google Drive!`
+        );
       }
+      setDriveConfirmDialog(null);
+    } catch (err) {
+      notify(
+        'error',
+        err instanceof Error ? err.message : 'Operasi Google Drive gagal.'
+      );
+    } finally {
+      setUploadingImage(false);
+      setProcessingDriveAction(false);
+    }
+  };
+
+  const handleSyncAllToFirestore = async () => {
+    if (!isOwnerFirebaseSignedIn || !auth.currentUser) {
+      notify(
+        'error',
+        `Login sebagai Owner Google (${OWNER_EMAIL}) terlebih dahulu untuk mengunci seluruh menu ke Cloud.`
+      );
+      return;
+    }
+
+    setSyncingCloud(true);
+    let syncedCount = 0;
+    let skippedTooLong = 0;
+    try {
+      for (const item of menuItems) {
+        const imageUrl = (item.imageUrl || '').trim();
+        if (!imageUrl || imageUrl.length > 500) {
+          skippedTooLong++;
+          continue;
+        }
+        await setDoc(doc(db, 'menu_items', item.id), {
+          name: item.name.trim().slice(0, 100),
+          category: item.category,
+          description: (item.description || '').trim().slice(0, 300),
+          imageUrl,
+          variants: item.variants.slice(0, 10).map((v) => ({
+            label: v.label.trim().slice(0, 40) || 'Porsi',
+            price: Math.max(0, Math.min(10000000, Number(v.price) || 0)),
+          })),
+          popular: Boolean(item.popular),
+          available: Boolean(item.available),
+          sortOrder: Math.max(0, Math.min(1000, Number(item.sortOrder) || 1)),
+          updatedAt: serverTimestamp(),
+          updatedBy: auth.currentUser.uid,
+        });
+        syncedCount++;
+      }
+
+      await setDoc(doc(db, 'store_settings', 'main'), {
+        storeName: settings.storeName,
+        tagline: settings.tagline,
+        whatsappNumber: settings.whatsappNumber,
+        instagramHandle: settings.instagramHandle,
+        instagramUrl: settings.instagramUrl,
+        tiktokHandle: settings.tiktokHandle,
+        tiktokUrl: settings.tiktokUrl,
+        mapsUrl: settings.mapsUrl,
+        addressNote: settings.addressNote,
+        openHours: settings.openHours,
+        announcement: settings.announcement,
+        gofoodUrl: settings.gofoodUrl,
+        shopeefoodUrl: settings.shopeefoodUrl,
+        grabfoodUrl: settings.grabfoodUrl,
+        updatedAt: serverTimestamp(),
+        updatedBy: auth.currentUser.uid,
+      });
+
+      if (skippedTooLong > 0) {
+        notify(
+          'error',
+          `${syncedCount} menu terkunci ke Cloud, tetapi ${skippedTooLong} menu masih memakai gambar base64 (>500 karakter). Upload ulang foto menu tersebut ke Google Drive agar terkunci permanen!`
+        );
+      } else {
+        notify(
+          'success',
+          `Semua ${syncedCount} menu & foto berhasil dikunci permanen di Cloud! Aman saat update di Google AI Studio maupun Vercel.`
+        );
+      }
+    } catch (err) {
+      notify(
+        'error',
+        err instanceof Error
+          ? `Gagal mengunci ke Cloud: ${err.message}`
+          : 'Gagal menyinkronkan ke Cloud Firestore.'
+      );
+    } finally {
+      setSyncingCloud(false);
     }
   };
 
@@ -574,21 +870,54 @@ export function StaffPortalModal({
       }
       onMenuUpdated(json.menuItems);
 
-      // Sync to Firestore if Owner is signed into Firebase Auth
-      if (isOwner && auth.currentUser?.email === OWNER_EMAIL) {
-        try {
-          await setDoc(doc(db, 'menu_items', slugId), {
-            ...payload,
-            updatedAt: serverTimestamp(),
-            updatedBy: auth.currentUser.uid,
-          });
-        } catch {
-          // Primary persistence already succeeded on server
+      // Lock permanently to Cloud Firestore if Owner is signed into Firebase Auth
+      let cloudLocked = false;
+      let cloudWarning = '';
+      if (isOwnerFirebaseSignedIn && auth.currentUser) {
+        if (payload.imageUrl.length > 500) {
+          cloudWarning =
+            'Menu tersimpan sementara, namun URL gambar terlalu panjang untuk dikunci ke Cloud. Upload foto melalui Google Drive agar tidak berubah saat update AI Studio!';
+        } else {
+          try {
+            await setDoc(doc(db, 'menu_items', slugId), {
+              name: payload.name.slice(0, 100),
+              category: payload.category,
+              description: payload.description.slice(0, 300),
+              imageUrl: payload.imageUrl,
+              variants: payload.variants.slice(0, 10).map((v) => ({
+                label: v.label.slice(0, 40),
+                price: Math.max(0, Math.min(10000000, v.price)),
+              })),
+              popular: Boolean(payload.popular),
+              available: Boolean(payload.available),
+              sortOrder: Math.max(0, Math.min(1000, payload.sortOrder)),
+              updatedAt: serverTimestamp(),
+              updatedBy: auth.currentUser.uid,
+            });
+            cloudLocked = true;
+          } catch (err) {
+            cloudWarning =
+              err instanceof Error
+                ? `Menu tersimpan di server, tapi sinkronisasi Cloud gagal: ${err.message}`
+                : 'Menu tersimpan di server, tapi gagal mengunci ke Cloud Firestore.';
+          }
         }
       }
 
       setEditingItemId(null);
-      notify('success', `Menu "${payload.name}" & gambarnya berhasil disimpan!`);
+      if (cloudWarning) {
+        notify('error', cloudWarning);
+      } else if (cloudLocked) {
+        notify(
+          'success',
+          `Menu "${payload.name}" & gambarnya tersimpan dan terkunci permanen di Cloud!`
+        );
+      } else {
+        notify(
+          'success',
+          `Menu "${payload.name}" tersimpan. Untuk mengunci permanen saat update AI Studio, login Owner via Google & klik "Kunci Semua ke Cloud".`
+        );
+      }
     } catch {
       notify('error', 'Terjadi kesalahan saat menyimpan menu.');
     } finally {
@@ -610,11 +939,11 @@ export function StaffPortalModal({
       }
       onMenuUpdated(json.menuItems);
 
-      if (isOwner && auth.currentUser?.email === OWNER_EMAIL) {
+      if (isOwnerFirebaseSignedIn) {
         try {
           await deleteDoc(doc(db, 'menu_items', id));
         } catch {
-          // Ignore secondary sync error
+          // Ignore if document wasn't synced to Firestore yet
         }
       }
 
@@ -639,6 +968,7 @@ export function StaffPortalModal({
         return;
       }
       onMenuUpdated(json.menuItems);
+      setConfirmResetDefault(false);
       notify('success', '14 menu resmi berhasil dipulihkan!');
     } catch {
       notify('error', 'Gagal menyinkronkan menu.');
@@ -668,19 +998,45 @@ export function StaffPortalModal({
       }
       onSettingsUpdated(json.settings);
 
-      if (isOwner && auth.currentUser?.email === OWNER_EMAIL) {
+      let cloudLocked = false;
+      if (isOwnerFirebaseSignedIn && auth.currentUser) {
         try {
           await setDoc(doc(db, 'store_settings', 'main'), {
-            ...json.settings,
+            storeName: json.settings.storeName,
+            tagline: json.settings.tagline,
+            whatsappNumber: json.settings.whatsappNumber,
+            instagramHandle: json.settings.instagramHandle,
+            instagramUrl: json.settings.instagramUrl,
+            tiktokHandle: json.settings.tiktokHandle,
+            tiktokUrl: json.settings.tiktokUrl,
+            mapsUrl: json.settings.mapsUrl,
+            addressNote: json.settings.addressNote,
+            openHours: json.settings.openHours,
+            announcement: json.settings.announcement,
+            gofoodUrl: json.settings.gofoodUrl,
+            shopeefoodUrl: json.settings.shopeefoodUrl,
+            grabfoodUrl: json.settings.grabfoodUrl,
             updatedAt: serverTimestamp(),
             updatedBy: auth.currentUser.uid,
           });
-        } catch {
-          // Primary persistence succeeded
+          cloudLocked = true;
+        } catch (err) {
+          notify(
+            'error',
+            err instanceof Error
+              ? `Kontak tersimpan di server, tapi sinkronisasi Cloud gagal: ${err.message}`
+              : 'Kontak tersimpan di server, tapi gagal sync ke Cloud.'
+          );
+          return;
         }
       }
 
-      notify('success', 'Kontak & alamat toko berhasil diperbarui!');
+      notify(
+        'success',
+        cloudLocked
+          ? 'Kontak & alamat toko diperbarui dan terkunci di Cloud!'
+          : 'Kontak & alamat toko berhasil diperbarui!'
+      );
     } catch {
       notify('error', 'Gagal menyimpan pengaturan kontak.');
     } finally {
@@ -1172,7 +1528,108 @@ export function StaffPortalModal({
 
                   {/* TAB 1: MENU & IMAGE EDITOR */}
                   {activeTab === 'menu' && (
-                    <div className="mt-5">
+                    <div className="mt-5 space-y-4">
+                      {/* Google Drive & Cloud Lock Status Bar */}
+                      <div className="rounded-xl border border-[#443A37] bg-[#2E2725] p-3.5">
+                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                          <div className="flex items-start gap-2.5">
+                            <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#38302D] text-[#E6A84C]">
+                              <HardDrive className="h-4 w-4" aria-hidden="true" />
+                            </div>
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-xs font-bold text-[#F6F2EC]">
+                                  Penyimpanan Foto Google Drive &amp; Kunci Cloud
+                                </span>
+                                {driveToken ? (
+                                  <span className="inline-flex items-center gap-1 rounded-md border border-emerald-500/35 bg-emerald-500/15 px-2 py-0.5 text-[10px] font-semibold text-emerald-300">
+                                    <Check className="h-3 w-3" />
+                                    Google Drive Terhubung
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 rounded-md border border-[#E6A84C]/35 bg-[#E6A84C]/10 px-2 py-0.5 text-[10px] font-semibold text-[#E6A84C]">
+                                    Belum terhubung ke Drive
+                                  </span>
+                                )}
+                                {isOwnerFirebaseSignedIn && (
+                                  <span className="inline-flex items-center gap-1 rounded-md border border-sky-500/35 bg-sky-500/15 px-2 py-0.5 text-[10px] font-semibold text-sky-300">
+                                    <Lock className="h-3 w-3" />
+                                    Cloud Firestore Aktif
+                                  </span>
+                                )}
+                              </div>
+                              <p className="mt-1 text-[11px] leading-relaxed text-[#A79E96]">
+                                Foto menu yang diupload ke Google Drive &amp; dikunci ke Cloud tidak akan berubah walaupun aplikasi di-update di Google AI Studio atau Vercel.
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 shrink-0">
+                            {!driveToken ? (
+                              <button
+                                type="button"
+                                disabled={connectingDrive}
+                                onClick={handleConnectGoogleDrive}
+                                className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg border border-[#747775] bg-white px-3.5 text-xs font-medium text-[#1F1F1F] shadow-2xs transition-colors hover:bg-[#F8F9FA] disabled:opacity-60"
+                              >
+                                <svg
+                                  viewBox="0 0 48 48"
+                                  className="h-4 w-4 shrink-0"
+                                  aria-hidden="true"
+                                >
+                                  <path
+                                    fill="#EA4335"
+                                    d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+                                  />
+                                  <path
+                                    fill="#4285F4"
+                                    d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+                                  />
+                                  <path
+                                    fill="#FBBC05"
+                                    d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+                                  />
+                                  <path
+                                    fill="#34A853"
+                                    d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+                                  />
+                                </svg>
+                                <span>
+                                  {connectingDrive
+                                    ? 'Menghubungkan...'
+                                    : 'Sign in with Google'}
+                                </span>
+                              </button>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setDriveConfirmDialog({ kind: 'backup' })}
+                                className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-[#443A37] bg-[#38302D] px-3 text-xs font-semibold text-[#F6F2EC] hover:bg-[#443A37]"
+                              >
+                                <HardDrive className="h-3.5 w-3.5 text-[#E6A84C]" />
+                                <span>Backup ke Drive</span>
+                              </button>
+                            )}
+
+                            {isOwner && (
+                              <button
+                                type="button"
+                                disabled={syncingCloud}
+                                onClick={handleSyncAllToFirestore}
+                                className="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-lg border border-[#E6A84C]/50 bg-[#38302D] px-3 text-xs font-semibold text-[#E6A84C] hover:bg-[#443A37] disabled:opacity-60"
+                              >
+                                <Cloud className="h-3.5 w-3.5" />
+                                <span>
+                                  {syncingCloud
+                                    ? 'Mengunci...'
+                                    : 'Kunci Semua ke Cloud'}
+                                </span>
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
                       {editingItemId ? (
                         <form onSubmit={handleSaveMenu} className="space-y-4">
                           <div className="flex items-center justify-between">
@@ -1246,7 +1703,7 @@ export function StaffPortalModal({
                             />
                           </div>
 
-                          {/* ENHANCED IMAGE EDITOR & UPLOAD */}
+                          {/* ENHANCED IMAGE EDITOR & GOOGLE DRIVE UPLOAD / PICKER */}
                           <div className="rounded-xl border border-[#443A37] bg-[#332C29] p-4 space-y-4">
                             <div className="flex flex-wrap items-center justify-between gap-2">
                               <div className="flex items-center gap-2">
@@ -1255,7 +1712,7 @@ export function StaffPortalModal({
                                   Edit Foto / Gambar Menu
                                 </span>
                               </div>
-                              <div>
+                              <div className="flex flex-wrap items-center gap-2">
                                 <input
                                   ref={fileInputRef}
                                   type="file"
@@ -1263,6 +1720,20 @@ export function StaffPortalModal({
                                   onChange={handleImageFileSelect}
                                   className="hidden"
                                 />
+                                {driveToken && (
+                                  <button
+                                    type="button"
+                                    onClick={handleOpenDrivePicker}
+                                    className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#E6A84C]/50 bg-[#2E2725] px-3 py-1.5 text-xs font-semibold text-[#E6A84C] hover:bg-[#38302D]"
+                                  >
+                                    <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />
+                                    <span>
+                                      {drivePickerOpen
+                                        ? 'Tutup Galeri Drive'
+                                        : 'Pilih dari Google Drive'}
+                                    </span>
+                                  </button>
+                                )}
                                 <button
                                   type="button"
                                   disabled={uploadingImage}
@@ -1273,11 +1744,150 @@ export function StaffPortalModal({
                                   <span>
                                     {uploadingImage
                                       ? 'Mengunggah...'
-                                      : 'Upload Foto dari HP / PC'}
+                                      : driveToken
+                                        ? 'Upload ke Google Drive'
+                                        : 'Upload Foto dari HP / PC'}
                                   </span>
                                 </button>
                               </div>
                             </div>
+
+                            {!driveToken && (
+                              <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#E6A84C]/35 bg-[#2A2321] px-3 py-2 text-[11px] text-[#C5BCB4]">
+                                <span>
+                                  Sambungkan Google Drive agar foto yang diupload tersimpan permanen di Drive Anda &amp; tidak berubah saat update AI Studio.
+                                </span>
+                                <button
+                                  type="button"
+                                  disabled={connectingDrive}
+                                  onClick={handleConnectGoogleDrive}
+                                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-[#747775] bg-white px-2.5 py-1 text-[11px] font-medium text-[#1F1F1F] hover:bg-[#F8F9FA] disabled:opacity-60"
+                                >
+                                  <svg
+                                    viewBox="0 0 48 48"
+                                    className="h-3.5 w-3.5 shrink-0"
+                                    aria-hidden="true"
+                                  >
+                                    <path
+                                      fill="#EA4335"
+                                      d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
+                                    />
+                                    <path
+                                      fill="#4285F4"
+                                      d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
+                                    />
+                                    <path
+                                      fill="#FBBC05"
+                                      d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
+                                    />
+                                    <path
+                                      fill="#34A853"
+                                      d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
+                                    />
+                                  </svg>
+                                  <span>
+                                    {connectingDrive
+                                      ? 'Menghubungkan...'
+                                      : 'Sign in with Google'}
+                                  </span>
+                                </button>
+                              </div>
+                            )}
+
+                            {/* Inline Google Drive Image Picker Gallery */}
+                            {drivePickerOpen && driveToken && (
+                              <div className="rounded-xl border border-[#443A37] bg-[#262120] p-3.5 space-y-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <div className="relative flex-1 min-w-[180px]">
+                                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-[#A79E96]" />
+                                    <input
+                                      type="text"
+                                      value={driveSearch}
+                                      onChange={(e) => setDriveSearch(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        if (e.key === 'Enter') {
+                                          e.preventDefault();
+                                          void loadDriveFiles(driveToken, driveSearch);
+                                        }
+                                      }}
+                                      placeholder="Cari nama foto di Google Drive..."
+                                      className="h-8 w-full rounded-lg border border-[#443A37] bg-[#332C29] pl-8 pr-3 text-xs text-[#F6F2EC] placeholder:text-[#8E847C] focus:border-[#E6A84C] focus:outline-none"
+                                    />
+                                  </div>
+                                  <button
+                                    type="button"
+                                    disabled={loadingDriveFiles}
+                                    onClick={() => void loadDriveFiles(driveToken, driveSearch)}
+                                    className="inline-flex h-8 cursor-pointer items-center gap-1 rounded-lg border border-[#443A37] bg-[#332C29] px-3 text-xs font-medium text-[#F6F2EC] hover:bg-[#38302D] disabled:opacity-60"
+                                  >
+                                    <RefreshCw
+                                      className={`h-3.5 w-3.5 ${
+                                        loadingDriveFiles ? 'animate-spin' : ''
+                                      }`}
+                                    />
+                                    <span>Muat Ulang</span>
+                                  </button>
+                                </div>
+
+                                {loadingDriveFiles ? (
+                                  <p className="py-6 text-center text-xs text-[#A79E96]">
+                                    Memuat daftar gambar dari Google Drive...
+                                  </p>
+                                ) : driveFiles.length === 0 ? (
+                                  <p className="py-6 text-center text-xs text-[#A79E96]">
+                                    Belum ada gambar ditemukan di Google Drive Anda. Klik &ldquo;Upload ke Google Drive&rdquo; untuk mengunggah foto baru.
+                                  </p>
+                                ) : (
+                                  <div className="grid max-h-64 grid-cols-2 gap-2.5 overflow-y-auto pr-1 sm:grid-cols-4">
+                                    {driveFiles.map((file) => (
+                                      <div
+                                        key={file.id}
+                                        className="group relative flex flex-col overflow-hidden rounded-lg border border-[#443A37] bg-[#2E2725]"
+                                      >
+                                        <div className="aspect-[4/3] w-full overflow-hidden bg-[#201C1B]">
+                                          <img
+                                            src={file.thumbnailLink || file.imageUrl}
+                                            alt={file.name}
+                                            referrerPolicy="no-referrer"
+                                            className="h-full w-full object-cover"
+                                          />
+                                        </div>
+                                        <div className="flex flex-col gap-1.5 p-2">
+                                          <p
+                                            className="truncate text-[11px] font-medium text-[#F6F2EC]"
+                                            title={file.name}
+                                          >
+                                            {file.name}
+                                          </p>
+                                          <div className="flex items-center gap-1">
+                                            <button
+                                              type="button"
+                                              onClick={() => handleSelectDriveFile(file)}
+                                              className="flex-1 cursor-pointer rounded bg-[#E53E22] px-2 py-1 text-[10px] font-semibold text-white hover:bg-[#C93218]"
+                                            >
+                                              Pakai Foto
+                                            </button>
+                                            <button
+                                              type="button"
+                                              onClick={() =>
+                                                setDriveConfirmDialog({
+                                                  kind: 'delete',
+                                                  driveFile: file,
+                                                })
+                                              }
+                                              aria-label={`Hapus ${file.name} dari Drive`}
+                                              className="inline-flex h-6 w-6 cursor-pointer items-center justify-center rounded border border-[#443A37] bg-[#262120] text-[#A79E96] hover:border-red-400/50 hover:text-red-400"
+                                            >
+                                              <Trash2 className="h-3 w-3" />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )}
 
                             <div className="grid grid-cols-1 gap-4 sm:grid-cols-12">
                               {/* Live Thumbnail Preview */}
@@ -1296,7 +1906,7 @@ export function StaffPortalModal({
                               <div className="space-y-3 sm:col-span-8">
                                 <div>
                                   <label className="block text-[11px] font-medium text-[#C5BCB4]">
-                                    URL Gambar (otomatis terisi saat upload, atau tempel URL)
+                                    URL Gambar (otomatis terisi URL permanen Drive saat upload)
                                   </label>
                                   <input
                                     type="text"
@@ -1307,7 +1917,7 @@ export function StaffPortalModal({
                                         imageUrl: e.target.value,
                                       }))
                                     }
-                                    placeholder="/uploads/... atau https://..."
+                                    placeholder="https://lh3.googleusercontent.com/d/..."
                                     className="mt-1 h-9 w-full rounded-lg border border-[#443A37] bg-[#2E2725] px-3 text-xs text-[#F6F2EC] focus:border-[#E53E22] focus:outline-none"
                                   />
                                 </div>
@@ -1482,15 +2092,38 @@ export function StaffPortalModal({
                               <span>Tambah Menu Baru</span>
                             </button>
 
-                            <button
-                              type="button"
-                              disabled={savingMenu}
-                              onClick={handleSeedDefaultMenu}
-                              className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#443A37] px-3.5 py-2 text-xs font-medium text-[#C5BCB4] hover:bg-[#38302D] hover:text-[#F6F2EC]"
-                            >
-                              <RotateCcw className="h-3.5 w-3.5" />
-                              <span>Pulihkan 14 Menu Resmi</span>
-                            </button>
+                            {confirmResetDefault ? (
+                              <div className="flex items-center gap-2">
+                                <span className="text-[11px] text-[#E6A84C]">
+                                  Timpa dengan 14 menu bawaan?
+                                </span>
+                                <button
+                                  type="button"
+                                  disabled={savingMenu}
+                                  onClick={handleSeedDefaultMenu}
+                                  className="cursor-pointer rounded-lg bg-[#E53E22] px-3 py-1.5 text-xs font-semibold text-white hover:bg-[#C93218] disabled:opacity-60"
+                                >
+                                  Ya, Pulihkan
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setConfirmResetDefault(false)}
+                                  className="cursor-pointer rounded-lg border border-[#443A37] px-3 py-1.5 text-xs text-[#C5BCB4]"
+                                >
+                                  Batal
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                disabled={savingMenu}
+                                onClick={() => setConfirmResetDefault(true)}
+                                className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-[#443A37] px-3.5 py-2 text-xs font-medium text-[#C5BCB4] hover:bg-[#38302D] hover:text-[#F6F2EC]"
+                              >
+                                <RotateCcw className="h-3.5 w-3.5" />
+                                <span>Pulihkan 14 Menu Resmi</span>
+                              </button>
+                            )}
                           </div>
 
                           <div className="mt-4 divide-y divide-[#3F3633] rounded-xl border border-[#443A37] bg-[#332C29]">
@@ -2002,6 +2635,115 @@ export function StaffPortalModal({
                 </div>
               )}
             </div>
+
+            {/* Mandatory Explicit Confirmation Dialog for Mutating / Deleting Google Drive Files */}
+            {driveConfirmDialog && (
+              <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4 backdrop-blur-xs">
+                <div className="w-full max-w-md rounded-2xl border border-[#443A37] bg-[#262120] p-5 shadow-2xl">
+                  <div className="flex items-start gap-3">
+                    <div
+                      className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${
+                        driveConfirmDialog.kind === 'delete'
+                          ? 'bg-red-500/15 text-red-400'
+                          : 'bg-[#E6A84C]/15 text-[#E6A84C]'
+                      }`}
+                    >
+                      <AlertTriangle className="h-5 w-5" aria-hidden="true" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <h3 className="font-display text-base font-bold text-[#F6F2EC]">
+                        {driveConfirmDialog.kind === 'upload' &&
+                          'Konfirmasi Upload ke Google Drive'}
+                        {driveConfirmDialog.kind === 'share-pick' &&
+                          'Konfirmasi Izin Publik Foto Drive'}
+                        {driveConfirmDialog.kind === 'delete' &&
+                          'Konfirmasi Hapus Foto Google Drive'}
+                        {driveConfirmDialog.kind === 'backup' &&
+                          'Konfirmasi Backup Menu ke Google Drive'}
+                      </h3>
+                      <p className="mt-1.5 text-xs leading-relaxed text-[#C5BCB4]">
+                        {driveConfirmDialog.kind === 'upload' && (
+                          <>
+                            File{' '}
+                            <strong className="text-[#F6F2EC]">
+                              {driveConfirmDialog.file.name}
+                            </strong>{' '}
+                            akan diunggah ke folder{' '}
+                            <strong className="text-[#F6F2EC]">
+                              Dimsum Mentai 77 Menu
+                            </strong>{' '}
+                            di Google Drive Anda dan diatur agar dapat dibaca publik
+                            (anyone reader) supaya foto tampil di website pelanggan.
+                          </>
+                        )}
+                        {driveConfirmDialog.kind === 'share-pick' && (
+                          <>
+                            Foto{' '}
+                            <strong className="text-[#F6F2EC]">
+                              {driveConfirmDialog.driveFile.name}
+                            </strong>{' '}
+                            saat ini belum dibagikan publik. Ubah izin file ini di
+                            Google Drive menjadi publik (anyone reader) agar gambar bisa
+                            dilihat oleh pelanggan?
+                          </>
+                        )}
+                        {driveConfirmDialog.kind === 'delete' && (
+                          <>
+                            Foto{' '}
+                            <strong className="text-red-300">
+                              {driveConfirmDialog.driveFile.name}
+                            </strong>{' '}
+                            akan dihapus permanen dari Google Drive Anda. Menu yang
+                            sedang memakai foto ini akan kehilangan gambarnya jika belum
+                            diganti.
+                          </>
+                        )}
+                        {driveConfirmDialog.kind === 'backup' && (
+                          <>
+                            Aplikasi akan membuat file backup JSON baru berisi seluruh{' '}
+                            <strong className="text-[#F6F2EC]">
+                              {menuItems.length} menu &amp; kontak toko
+                            </strong>{' '}
+                            di folder{' '}
+                            <strong className="text-[#F6F2EC]">
+                              Dimsum Mentai 77 Menu
+                            </strong>{' '}
+                            pada Google Drive Anda.
+                          </>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-5 flex justify-end gap-2">
+                    <button
+                      type="button"
+                      disabled={processingDriveAction}
+                      onClick={() => setDriveConfirmDialog(null)}
+                      className="cursor-pointer rounded-lg border border-[#443A37] bg-[#2E2725] px-4 py-2 text-xs font-semibold text-[#C5BCB4] hover:bg-[#38302D] hover:text-[#F6F2EC] disabled:opacity-60"
+                    >
+                      Batal
+                    </button>
+                    <button
+                      type="button"
+                      disabled={processingDriveAction}
+                      onClick={executeDriveConfirmAction}
+                      className={`cursor-pointer rounded-lg px-4 py-2 text-xs font-semibold text-white disabled:opacity-60 ${
+                        driveConfirmDialog.kind === 'delete'
+                          ? 'bg-red-600 hover:bg-red-700'
+                          : 'bg-[#E53E22] hover:bg-[#C93218]'
+                      }`}
+                    >
+                      {processingDriveAction
+                        ? 'Memproses...'
+                        : driveConfirmDialog.kind === 'delete'
+                          ? 'Ya, Hapus Permanen'
+                          : 'Ya, Lanjutkan'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </motion.div>
         </div>
       )}

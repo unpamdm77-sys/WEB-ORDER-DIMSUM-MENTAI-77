@@ -10,8 +10,9 @@ import { OpeningSplash } from './components/OpeningSplash';
 import { DimsumKamonCrest } from './components/OrientalAccents';
 import { PackagesAndPosterSection } from './components/PackagesAndPosterSection';
 import { StaffPortalModal } from './components/StaffPortalModal';
+import { collection, doc, getDoc, getDocs } from 'firebase/firestore';
 import { DEFAULT_MENU_ITEMS, DEFAULT_STORE_SETTINGS } from './data/defaultData';
-import { testFirestoreConnection } from './firebase';
+import { db, testFirestoreConnection } from './firebase';
 import {
   CartItem,
   MenuItem,
@@ -74,27 +75,90 @@ export default function App() {
     };
   }, []);
 
-  // Load persisted storefront data from server
+  // Load persisted storefront data from server AND merge Cloud Firestore so uploaded photos & edits survive AI Studio updates / Vercel redeploys
   useEffect(() => {
     let active = true;
     (async () => {
+      let mergedItems = [...DEFAULT_MENU_ITEMS];
+      let mergedSettings = { ...DEFAULT_STORE_SETTINGS };
+
       try {
         const resp = await fetch('/api/storefront');
-        if (!resp.ok) return;
-        const json = (await resp.json()) as {
-          menuItems?: MenuItem[];
-          settings?: StoreSettings;
-        };
-        if (!active) return;
-        if (Array.isArray(json.menuItems) && json.menuItems.length > 0) {
-          setMenuItems(json.menuItems);
-        }
-        if (json.settings) {
-          setSettings(json.settings);
+        if (resp.ok) {
+          const json = (await resp.json()) as {
+            menuItems?: MenuItem[];
+            settings?: StoreSettings;
+          };
+          if (Array.isArray(json.menuItems) && json.menuItems.length > 0) {
+            mergedItems = json.menuItems;
+          }
+          if (json.settings) {
+            mergedSettings = { ...mergedSettings, ...json.settings };
+          }
         }
       } catch {
         // Fallback smoothly to defaultData
       }
+
+      // Overlay persisted Cloud Firestore menu_items & store_settings (highest priority)
+      try {
+        const [menuSnap, settingsSnap] = await Promise.all([
+          getDocs(collection(db, 'menu_items')),
+          getDoc(doc(db, 'store_settings', 'main')),
+        ]);
+
+        if (!menuSnap.empty) {
+          const itemMap = new Map<string, MenuItem>();
+          for (const base of mergedItems) {
+            itemMap.set(base.id, base);
+          }
+          menuSnap.forEach((docSnap) => {
+            const d = docSnap.data() as Partial<MenuItem>;
+            if (typeof d.name === 'string' && Array.isArray(d.variants)) {
+              itemMap.set(docSnap.id, {
+                id: docSnap.id,
+                name: d.name,
+                category: d.category || 'Mentai Series',
+                description: d.description || '',
+                imageUrl: d.imageUrl || DEFAULT_MENU_ITEMS[0].imageUrl,
+                variants: d.variants,
+                popular: Boolean(d.popular),
+                available: d.available !== false,
+                sortOrder: typeof d.sortOrder === 'number' ? d.sortOrder : 99,
+              });
+            }
+          });
+          mergedItems = Array.from(itemMap.values()).sort(
+            (a, b) => a.sortOrder - b.sortOrder
+          );
+        }
+
+        if (settingsSnap.exists()) {
+          const cloudSettings = settingsSnap.data() as Partial<StoreSettings>;
+          mergedSettings = {
+            storeName: cloudSettings.storeName || mergedSettings.storeName,
+            tagline: cloudSettings.tagline || mergedSettings.tagline,
+            whatsappNumber: cloudSettings.whatsappNumber || mergedSettings.whatsappNumber,
+            instagramHandle: cloudSettings.instagramHandle || mergedSettings.instagramHandle,
+            instagramUrl: cloudSettings.instagramUrl || mergedSettings.instagramUrl,
+            tiktokHandle: cloudSettings.tiktokHandle || mergedSettings.tiktokHandle,
+            tiktokUrl: cloudSettings.tiktokUrl || mergedSettings.tiktokUrl,
+            mapsUrl: cloudSettings.mapsUrl || mergedSettings.mapsUrl,
+            addressNote: cloudSettings.addressNote || mergedSettings.addressNote,
+            openHours: cloudSettings.openHours || mergedSettings.openHours,
+            announcement: cloudSettings.announcement ?? mergedSettings.announcement,
+            gofoodUrl: cloudSettings.gofoodUrl ?? mergedSettings.gofoodUrl,
+            shopeefoodUrl: cloudSettings.shopeefoodUrl ?? mergedSettings.shopeefoodUrl,
+            grabfoodUrl: cloudSettings.grabfoodUrl ?? mergedSettings.grabfoodUrl,
+          };
+        }
+      } catch {
+        // Keep API/default data if Firestore is unreachable
+      }
+
+      if (!active) return;
+      setMenuItems(mergedItems);
+      setSettings(mergedSettings);
     })();
     return () => {
       active = false;
@@ -247,7 +311,7 @@ export default function App() {
       <main className="flex-1">
         <HeroSection
           settings={settings}
-          menuCount={menuItems.length}
+          menuItems={menuItems}
           onOpenPoster={() => setPosterOpen(true)}
         />
 
@@ -261,6 +325,7 @@ export default function App() {
 
         <PackagesAndPosterSection
           settings={settings}
+          menuItems={menuItems}
           posterOpen={posterOpen}
           onOpenPoster={() => setPosterOpen(true)}
           onClosePoster={() => setPosterOpen(false)}
