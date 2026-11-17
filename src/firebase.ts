@@ -64,6 +64,7 @@ export function handleFirestoreError(
 }
 
 export const OWNER_EMAIL = 'unpam.dm77@gmail.com';
+export const FIREBASE_PROJECT_ID = firebaseConfig.projectId;
 
 export async function testFirestoreConnection(): Promise<boolean> {
   try {

@@ -1,10 +1,13 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import type { NextFunction, Request, Response } from 'express';
+
+const requireJson = createRequire(import.meta.url);
 
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = process.cwd();
@@ -479,6 +482,14 @@ function requireOwnerOnly(req: AuthedRequest, res: Response, next: NextFunction)
 
 function getFirebaseApiKey(): string | null {
   if (process.env.FIREBASE_API_KEY) return process.env.FIREBASE_API_KEY;
+  try {
+    const bundledCfg = requireJson('../firebase-applet-config.json') as {
+      apiKey?: string;
+    };
+    if (bundledCfg?.apiKey) return bundledCfg.apiKey;
+  } catch {
+    // Fallback to runtime filesystem lookup
+  }
   const candidatePaths = [
     path.resolve(ROOT_DIR, 'firebase-applet-config.json'),
     path.resolve(MODULE_DIR, '../firebase-applet-config.json'),
