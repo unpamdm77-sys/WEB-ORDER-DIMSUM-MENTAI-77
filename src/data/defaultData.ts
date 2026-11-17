@@ -1,0 +1,253 @@
+import { MenuCategory, MenuItem, StoreSettings } from '../types';
+
+export const MENU_CATEGORIES: MenuCategory[] = [
+  'Mentai Series',
+  'Goreng & Crispy',
+  'Special & Kuah',
+  'Paket & Cake',
+  'Add-On',
+];
+
+export const IMAGE_PRESETS = [
+  {
+    label: 'Dimsum Mentai Torched + Tobiko',
+    url: '/src/assets/images/menu_dimsum_mentai_classic_1794850383222.jpg',
+  },
+  {
+    label: 'Dimsum Mentai Mozarella & Kuah Keju',
+    url: '/src/assets/images/menu_dimsum_cheese_moza_1794850383190.jpg',
+  },
+  {
+    label: 'Dimsum Original Kukus & Chili Oil',
+    url: '/src/assets/images/menu_dimsum_original_steamed_1794850382366.jpg',
+  },
+  {
+    label: 'Dimsum Goreng Katsoubushi & Keju',
+    url: '/src/assets/images/menu_dimsum_goreng_katsu_1794850384935.jpg',
+  },
+  {
+    label: 'Dimsum Birthday Cake & Mix All Varian',
+    url: '/src/assets/images/menu_dimsum_party_cake_1794850385246.jpg',
+  },
+  {
+    label: 'Dimsum Mentai Feast (Hero)',
+    url: '/src/assets/images/hero_dimsum_mentai_feast_1794850382870.jpg',
+  },
+];
+
+export const DEFAULT_MENU_ITEMS: MenuItem[] = [
+  {
+    id: 'dimsum-mentai',
+    name: 'Dimsum Mentai',
+    category: 'Mentai Series',
+    description:
+      'Siomay ayam udang lembut disiram saus mentai creamy khas 77 yang di-torch harum dengan taburan 100% Tobiko asli & nori.',
+    imageUrl: '/src/assets/images/menu_dimsum_mentai_classic_1794850383222.jpg',
+    variants: [
+      { label: 'Isi 4', price: 20000 },
+      { label: 'Isi 6', price: 27000 },
+      { label: 'Isi 16', price: 85000 },
+    ],
+    popular: true,
+    available: true,
+    sortOrder: 1,
+  },
+  {
+    id: 'dimsum-mentai-mozarella',
+    name: 'Dimsum Mentai Mozarella',
+    category: 'Mentai Series',
+    description:
+      'Perpaduan saus mentai gurih dan lelehan keju mozzarella melimpah yang dibakar sempurna, lumer di setiap gigitan.',
+    imageUrl: '/src/assets/images/menu_dimsum_cheese_moza_1794850383190.jpg',
+    variants: [
+      { label: 'Isi 4', price: 25000 },
+      { label: 'Isi 6', price: 32000 },
+    ],
+    popular: true,
+    available: true,
+    sortOrder: 2,
+  },
+  {
+    id: 'dimsum-mentai-cheese',
+    name: 'Dimsum Mentai Cheese',
+    category: 'Mentai Series',
+    description:
+      'Kombinasi saus mentai klasik dan saus keju gurih creamy bertabur tobiko segar dan parsley harum.',
+    imageUrl: '/src/assets/images/menu_dimsum_cheese_moza_1794850383190.jpg',
+    variants: [
+      { label: 'Isi 4', price: 22000 },
+      { label: 'Isi 6', price: 30000 },
+    ],
+    popular: false,
+    available: true,
+    sortOrder: 3,
+  },
+  {
+    id: 'dimsum-mentai-mix-sweet-spicy',
+    name: 'Dimsum Mentai Mix Sweet Spicy',
+    category: 'Mentai Series',
+    description:
+      'Setengah mentai creamy, setengah glaze sweet & spicy yang pedas manis nagih dalam satu tray hangat.',
+    imageUrl: '/src/assets/images/hero_dimsum_mentai_feast_1794850382870.jpg',
+    variants: [
+      { label: 'Isi 4', price: 23000 },
+      { label: 'Isi 6', price: 30000 },
+    ],
+    popular: false,
+    available: true,
+    sortOrder: 4,
+  },
+  {
+    id: 'dimsum-mentai-mix-goreng',
+    name: 'Dimsum Mentai Mix Goreng',
+    category: 'Mentai Series',
+    description:
+      'Sensasi ganda: lembutnya dimsum mentai torched berpadu dengan renyahnya dimsum goreng dalam satu kotak.',
+    imageUrl: '/src/assets/images/menu_dimsum_mentai_classic_1794850383222.jpg',
+    variants: [
+      { label: 'Isi 4', price: 23000 },
+      { label: 'Isi 6', price: 30000 },
+    ],
+    popular: false,
+    available: true,
+    sortOrder: 5,
+  },
+  {
+    id: 'dimsum-goreng-katsoubushi',
+    name: 'Dimsum Goreng Katsoubushi',
+    category: 'Goreng & Crispy',
+    description:
+      'Dimsum goreng keemasan super renyah dengan saus takoyaki spesial dan taburan melimpah serpihan ikan cakalang (katsoubushi).',
+    imageUrl: '/src/assets/images/menu_dimsum_goreng_katsu_1794850384935.jpg',
+    variants: [
+      { label: 'Isi 4', price: 23000 },
+      { label: 'Isi 6', price: 30000 },
+    ],
+    popular: true,
+    available: true,
+    sortOrder: 6,
+  },
+  {
+    id: 'dimsum-goreng-mix-sweet-spicy',
+    name: 'Dimsum Goreng Mix Sweet Spicy',
+    category: 'Goreng & Crispy',
+    description:
+      'Dimsum goreng crispy dibalut saus sweet & spicy karamel pedas manis yang gurih dan menggugah selera.',
+    imageUrl: '/src/assets/images/menu_dimsum_goreng_katsu_1794850384935.jpg',
+    variants: [
+      { label: 'Isi 4', price: 23000 },
+      { label: 'Isi 6', price: 30000 },
+    ],
+    popular: false,
+    available: true,
+    sortOrder: 7,
+  },
+  {
+    id: 'dimsum-goreng-keju',
+    name: 'Dimsum Goreng Keju',
+    category: 'Goreng & Crispy',
+    description:
+      'Kulit pangsit renyah berisi ayam udang lembut dan keju lumer gurih di dalamnya—favorit camilan sore di UNPAM.',
+    imageUrl: '/src/assets/images/menu_dimsum_goreng_katsu_1794850384935.jpg',
+    variants: [{ label: '1 Porsi', price: 20000 }],
+    popular: false,
+    available: true,
+    sortOrder: 8,
+  },
+  {
+    id: 'dimsum-kuah-keju-creamy',
+    name: 'Dimsum Kuah Keju Creamy',
+    category: 'Special & Kuah',
+    description:
+      'Dimsum kukus hangat disiram kuah keju creamy kental gurih yang bikin nagih, cocok dinikmati hangat kapan saja.',
+    imageUrl: '/src/assets/images/menu_dimsum_cheese_moza_1794850383190.jpg',
+    variants: [{ label: 'Isi 4', price: 25000 }],
+    popular: true,
+    available: true,
+    sortOrder: 9,
+  },
+  {
+    id: 'dimsum-sweet-spicy',
+    name: 'Dimsum Sweet & Spicy',
+    category: 'Special & Kuah',
+    description:
+      'Dimsum kukus lembut berlumur saus glaze pedas manis mengilap dengan wijen sangrai yang kaya rasa.',
+    imageUrl: '/src/assets/images/hero_dimsum_mentai_feast_1794850382870.jpg',
+    variants: [
+      { label: 'Isi 4', price: 22000 },
+      { label: 'Isi 6', price: 30000 },
+    ],
+    popular: false,
+    available: true,
+    sortOrder: 10,
+  },
+  {
+    id: 'dimsum-original',
+    name: 'Dimsum Original',
+    category: 'Special & Kuah',
+    description:
+      'Dimsum kukus klasik daging ayam & udang padat juicy tanpa tepung berlebih, lengkap dengan saus sambal & chili oil.',
+    imageUrl: '/src/assets/images/menu_dimsum_original_steamed_1794850382366.jpg',
+    variants: [
+      { label: 'Isi 4', price: 12000 },
+      { label: 'Isi 6', price: 18000 },
+    ],
+    popular: false,
+    available: true,
+    sortOrder: 11,
+  },
+  {
+    id: 'dimsum-mix-all-varian',
+    name: 'Dimsum Mix All Varian',
+    category: 'Paket & Cake',
+    description:
+      'Paket lengkap isi 16 pcs berisi seluruh varian favorit: Mentai, Cheese, Mozarella, Sweet Spicy, dan Goreng dalam satu box.',
+    imageUrl: '/src/assets/images/menu_dimsum_party_cake_1794850385246.jpg',
+    variants: [{ label: 'Isi 16', price: 90000 }],
+    popular: true,
+    available: true,
+    sortOrder: 12,
+  },
+  {
+    id: 'dimsum-birthday-cake',
+    name: 'Dimsum Birthday Cake',
+    category: 'Paket & Cake',
+    description:
+      'Kejutan ulang tahun atau anniversary unik berisi 16 pcs dimsum premium lengkap dengan topper ucapan spesial.',
+    imageUrl: '/src/assets/images/menu_dimsum_party_cake_1794850385246.jpg',
+    variants: [{ label: 'Isi 16', price: 85000 }],
+    popular: true,
+    available: true,
+    sortOrder: 13,
+  },
+  {
+    id: 'ekstra-chili-oil',
+    name: 'Ekstra Chili Oil',
+    category: 'Add-On',
+    description:
+      'Minyak cabai racikan rumahan pedas aromatik dengan ebi dan bawang putih renyah untuk pendamping wajib dimsum.',
+    imageUrl: '/src/assets/images/menu_dimsum_original_steamed_1794850382366.jpg',
+    variants: [{ label: 'Chili Oil', price: 3000 }],
+    popular: false,
+    available: true,
+    sortOrder: 14,
+  },
+];
+
+export const DEFAULT_STORE_SETTINGS: StoreSettings = {
+  storeName: 'Dimsum Mentai 77 UNPAM',
+  tagline: 'The Ultimate Fusion · 100% Tobiko Asli',
+  whatsappNumber: '081996451323',
+  instagramHandle: '@DIMSUMMENTAI77.UNPAM',
+  instagramUrl: 'https://www.instagram.com/dimsummentai77.unpam',
+  tiktokHandle: '@dimsum.mentai.77.unpam',
+  tiktokUrl: 'https://www.tiktok.com/@dimsum.mentai.77.unpam',
+  mapsUrl: 'https://share.google/1zD7AfzXzzwkXprjD',
+  addressNote:
+    'Jl. Pamulang Permai 1, Samping Gapura Bundaran Tugu Pamulang (Area Kampus UNPAM, Tangerang Selatan)',
+  openHours: 'Setiap Hari · 11.00 – 22.00 WIB',
+  announcement: '100% Tobiko Asli · Tersedia di GoFood, ShopeeFood, GrabFood & Pesan Direct WhatsApp',
+  gofoodUrl: 'https://gofood.co.id',
+  shopeefoodUrl: 'https://shopee.co.id/m/shopeefood',
+  grabfoodUrl: 'https://food.grab.com/id/id',
+};

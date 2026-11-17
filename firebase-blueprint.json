@@ -1,0 +1,217 @@
+{
+  "entities": {
+    "MenuItem": {
+      "title": "MenuItem",
+      "description": "A dimsum menu item displayed on the public storefront and editable by authorized staff.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100,
+          "description": "Display name of the dimsum item"
+        },
+        "category": {
+          "type": "string",
+          "enum": ["Mentai Series", "Goreng & Crispy", "Special & Kuah", "Paket & Cake", "Add-On"],
+          "description": "Menu category"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300,
+          "description": "Appetizing short description"
+        },
+        "imageUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500,
+          "description": "Path or URL to the dish photograph"
+        },
+        "variants": {
+          "type": "array",
+          "description": "Available portion sizes and prices in IDR"
+        },
+        "popular": {
+          "type": "boolean",
+          "description": "Whether the dish is highlighted as a bestseller"
+        },
+        "available": {
+          "type": "boolean",
+          "description": "Whether the dish is currently available for order"
+        },
+        "sortOrder": {
+          "type": "number",
+          "description": "Display ordering index"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the last edit"
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "description": "UID of the staff member who last updated the item"
+        }
+      },
+      "required": ["name", "category", "description", "imageUrl", "variants", "popular", "available", "sortOrder", "updatedAt", "updatedBy"]
+    },
+    "StoreSettings": {
+      "title": "StoreSettings",
+      "description": "Public storefront contact links, social media, Google Maps location, and delivery info editable by staff.",
+      "type": "object",
+      "properties": {
+        "storeName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "tagline": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 140
+        },
+        "whatsappNumber": {
+          "type": "string",
+          "minLength": 8,
+          "maxLength": 20,
+          "pattern": "^[0-9+]+$"
+        },
+        "instagramHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "instagramUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "tiktokHandle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "tiktokUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "mapsUrl": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "addressNote": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 250
+        },
+        "openHours": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "announcement": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 200
+        },
+        "gofoodUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300
+        },
+        "shopeefoodUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300
+        },
+        "grabfoodUrl": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 300
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": [
+        "storeName",
+        "tagline",
+        "whatsappNumber",
+        "instagramHandle",
+        "instagramUrl",
+        "tiktokHandle",
+        "tiktokUrl",
+        "mapsUrl",
+        "addressNote",
+        "openHours",
+        "announcement",
+        "gofoodUrl",
+        "shopeefoodUrl",
+        "grabfoodUrl",
+        "updatedAt",
+        "updatedBy"
+      ]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized staff account permitted to manage menu items and store contact settings.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 150
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "role": {
+          "type": "string",
+          "enum": ["owner", "staff"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "addedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "required": ["uid", "email", "displayName", "role", "createdAt", "addedBy"]
+    }
+  },
+  "firestore": {
+    "/menu_items/{itemId}": {
+      "schema": { "$ref": "#/entities/MenuItem" },
+      "description": "Publicly readable menu catalog items editable exclusively by verified staff."
+    },
+    "/store_settings/{settingId}": {
+      "schema": { "$ref": "#/entities/StoreSettings" },
+      "description": "Publicly readable store contact, social links, and operating info editable exclusively by verified staff."
+    },
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Staff authorization registry managed by the store owner."
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "Dimsum Mentai 77 UNPAM",
+  "description": "Website resmi Dimsum Mentai 77 Universitas Pamulang — The Ultimate Fusion. Pesan langsung via WhatsApp, lihat menu visual menggugah selera, lokasi UNPAM, dan portal edit staff.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
